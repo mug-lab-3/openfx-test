@@ -27,15 +27,17 @@ sudo apt install -y clang lld cmake ninja-build ccache
 
 ## SDK のセットアップ
 
-このリポジトリには OpenFX SDK 本体は含まれていません。ビルドの前に以下の準備が必要です。
+このリポジトリには OpenFX SDK 本体は含まれていません。ビルドの前に以下のコマンドを実行して SDK を取得してください。
 
-1. [OpenFX 公式リポジトリ](https://github.com/ofxa/openfx) 等から SDK をダウンロードします。
-2. ダウンロードした SDK を、フォルダ名を **`openfx-OFX_Release_1.5.1`** に変更した上で、このプロジェクトのルートディレクトリに配置してください。
+```bash
+# プロジェクトルートで実行
+git clone -b OFX_Release_1.5.1 https://github.com/ofxa/openfx.git openfx-OFX_Release_1.5.1
+```
 
-ディレクトリ構造のイメージ：
+ディレクトリ構造が以下のようになれば準備完了です：
 ```text
 openfx-test/
-├── openfx-OFX_Release_1.5.1/  <-- ここに配置
+├── openfx-OFX_Release_1.5.1/
 │   ├── include/
 │   └── Support/
 ├── main.cpp
