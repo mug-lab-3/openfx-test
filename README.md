@@ -67,6 +67,23 @@ chmod +x build.sh
 
 ビルドが成功すると、`build/MugPlugin.ofx` が生成されます。
 
+## ビルド成果物とインストール
+
+### 生成ファイル
+- **`build/MugPlugin.ofx`**
+
+### インストール方法 (Windows)
+生成された `.ofx` ファイルを、Windows 側の以下のディレクトリにコピーしてください（ディレクトリがない場合は作成してください）：
+
+`C:\Program Files\Common Files\OFX\Plugins\MugPlugin.ofx.bundle\Contents\Win64`
+
+> [!IMPORTANT]
+> **ディレクトリ名の整合性について**
+>
+> ディレクトリ名 `MugPlugin.ofx.bundle` の `MugPlugin` の部分は、その中に配置するバイナリファイル名（`MugPlugin.ofx`）と必ず一致させてください。ここが一致していないと、ホストアプリケーションがプラグインを正しく認識できない原因となります。
+
+コピー後、DaVinci Resolve などの OpenFX 対応ホストを起動（または再起動）すると、プラグインが読み込まれます。
+
 ## プロジェクト構成
 
 - `main.cpp`: プラグインのメインソースコード
