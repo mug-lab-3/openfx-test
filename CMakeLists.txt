@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.10)
 project(MugPlugin VERSION 1.0.0 LANGUAGES CXX)
 
+# Enable ccache if available
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+endif()
+
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
