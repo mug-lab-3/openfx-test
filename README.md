@@ -1,5 +1,8 @@
 # openfx-test
 
+> [!NOTE]
+> このリポジトリの内容（ソースコード、ビルド設定、ドキュメント等）のほぼすべては、AI（Antigravity / Google DeepMind）との対話を通じて作成されました。
+
 OpenFX 開発用のテストプラグインプロジェクトです。
 Linux 環境から Windows 向けにクロスコンパイルを行い、ビルドの高速化（ccache + Ninja）に対応しています。
 
