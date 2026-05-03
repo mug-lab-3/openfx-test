@@ -31,7 +31,7 @@ sudo apt install -y clang lld cmake ninja-build ccache
 
 ```bash
 # プロジェクトルートで実行
-git clone -b OFX_Release_1.5.1 https://github.com/ofxa/openfx.git openfx-OFX_Release_1.5.1
+git clone -b OFX_Release_1.5.1 --depth 1 https://github.com/ofxa/openfx.git openfx-OFX_Release_1.5.1
 ```
 
 ディレクトリ構造が以下のようになれば準備完了です：
