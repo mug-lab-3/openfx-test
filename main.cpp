@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <math.h>
+#include <algorithm>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -28,53 +29,97 @@ protected:
     OFX::Double2DParam* _rectCenter;
     OFX::DoubleParam* _rectWidth;
     OFX::DoubleParam* _rectHeight;
+    OFX::Clip* _srcClip;
 
-    bool _isDragging;
+    enum DragMode {
+        eModeNone,
+        eModeCenter,
+        eModeTopLeft,
+        eModeTopRight,
+        eModeBottomLeft,
+        eModeBottomRight
+    };
+    DragMode _dragMode;
 
 public:
     MugInteract(OfxInteractHandle handle, OFX::ImageEffect* effect)
-        : OFX::OverlayInteract(handle), _isDragging(false)
+        : OFX::OverlayInteract(handle), _dragMode(eModeNone)
     {
         _rectCenter = effect->fetchDouble2DParam("rectCenter");
         _rectWidth = effect->fetchDoubleParam("rectWidth");
         _rectHeight = effect->fetchDoubleParam("rectHeight");
+        _srcClip = effect->fetchClip(kOfxImageEffectSimpleSourceClipName);
+    }
+
+    // Map normalized (0..1) to pixel coordinates based on RoD
+    void getPixelRect(double time, double &cx, double &cy, double &w, double &h, OfxRectD &rod) {
+        rod = _srcClip->getRegionOfDefinition(time);
+        double rw = rod.x2 - rod.x1;
+        double rh = rod.y2 - rod.y1;
+
+        double ncx, ncy, nw, nh;
+        _rectCenter->getValueAtTime(time, ncx, ncy);
+        nw = _rectWidth->getValueAtTime(time);
+        nh = _rectHeight->getValueAtTime(time);
+
+        cx = rod.x1 + ncx * rw;
+        cy = rod.y1 + ncy * rh;
+        w = nw * rw;
+        h = nh * rh;
     }
 
     virtual bool draw(const OFX::DrawArgs& args) override {
-        if (!_rectCenter || !_rectWidth || !_rectHeight) return false;
-
         double cx, cy, w, h;
-        _rectCenter->getValueAtTime(args.time, cx, cy);
-        w = _rectWidth->getValueAtTime(args.time);
-        h = _rectHeight->getValueAtTime(args.time);
+        OfxRectD rod;
+        getPixelRect(args.time, cx, cy, w, h, rod);
 
-        // Calculate size in pixels based on the view
-        // Depending on the coordinate system, we might need to adjust for aspect ratio or size.
-        // Assuming canonical coordinates [0..1] mapped to pixel space or just using coordinates directly.
-        // For simplicity, let's draw in canonical coordinates.
-        
-        OfxPointD pScale = args.pixelScale;
         double hw = w * 0.5;
         double hh = h * 0.5;
+        double x1 = cx - hw;
+        double x2 = cx + hw;
+        double y1 = cy - hh;
+        double y2 = cy + hh;
 
         glPushMatrix();
 
-        // If dragging, draw in a different color (e.g., Yellow), otherwise White
-        if (_isDragging) {
-            glColor3f(1.0f, 1.0f, 0.0f);
-        } else {
-            glColor3f(1.0f, 1.0f, 1.0f);
-        }
-
+        // Draw main rectangle
+        glColor3f(1.0f, 1.0f, 1.0f);
         glBegin(GL_LINE_LOOP);
-        glVertex2d(cx - hw, cy - hh);
-        glVertex2d(cx - hw, cy + hh);
-        glVertex2d(cx + hw, cy + hh);
-        glVertex2d(cx + hw, cy - hh);
+        glVertex2d(x1, y1);
+        glVertex2d(x1, y2);
+        glVertex2d(x2, y2);
+        glVertex2d(x2, y1);
         glEnd();
 
-        // Draw a small crosshair at the center
-        double crossSize = 10.0 * pScale.x;
+        // Draw handles at corners
+        double handleSize = 8.0 * args.pixelScale.x;
+        auto drawHandle = [&](double x, double y, bool active) {
+            if (active) glColor3f(1.0f, 1.0f, 0.0f);
+            else glColor3f(1.0f, 1.0f, 1.0f);
+            glBegin(GL_QUADS);
+            glVertex2d(x - handleSize, y - handleSize);
+            glVertex2d(x - handleSize, y + handleSize);
+            glVertex2d(x + handleSize, y + handleSize);
+            glVertex2d(x + handleSize, y - handleSize);
+            glEnd();
+            // outline
+            glColor3f(0.0f, 0.0f, 0.0f);
+            glBegin(GL_LINE_LOOP);
+            glVertex2d(x - handleSize, y - handleSize);
+            glVertex2d(x - handleSize, y + handleSize);
+            glVertex2d(x + handleSize, y + handleSize);
+            glVertex2d(x + handleSize, y - handleSize);
+            glEnd();
+        };
+
+        drawHandle(x1, y1, _dragMode == eModeBottomLeft);
+        drawHandle(x1, y2, _dragMode == eModeTopLeft);
+        drawHandle(x2, y2, _dragMode == eModeTopRight);
+        drawHandle(x2, y1, _dragMode == eModeBottomRight);
+
+        // Draw center cross
+        glColor3f(1.0f, 1.0f, 1.0f);
+        double crossSize = 10.0 * args.pixelScale.x;
         glBegin(GL_LINES);
         glVertex2d(cx - crossSize, cy);
         glVertex2d(cx + crossSize, cy);
@@ -83,47 +128,90 @@ public:
         glEnd();
 
         glPopMatrix();
-
         return true;
     }
 
     virtual bool penDown(const OFX::PenArgs& args) override {
-        if (!_rectCenter || !_rectWidth || !_rectHeight) return false;
-
         double cx, cy, w, h;
-        _rectCenter->getValue(cx, cy);
-        w = _rectWidth->getValue();
-        h = _rectHeight->getValue();
+        OfxRectD rod;
+        getPixelRect(args.time, cx, cy, w, h, rod);
 
         double hw = w * 0.5;
         double hh = h * 0.5;
+        double x1 = cx - hw;
+        double x2 = cx + hw;
+        double y1 = cy - hh;
+        double y2 = cy + hh;
 
-        // Check if pen is inside the rectangle
         double px = args.penPosition.x;
         double py = args.penPosition.y;
+        double tol = 10.0 * args.pixelScale.x;
 
-        if (px >= cx - hw && px <= cx + hw && py >= cy - hh && py <= cy + hh) {
-            _isDragging = true;
+        if (abs(px - x1) < tol && abs(py - y1) < tol) _dragMode = eModeBottomLeft;
+        else if (abs(px - x1) < tol && abs(py - y2) < tol) _dragMode = eModeTopLeft;
+        else if (abs(px - x2) < tol && abs(py - y2) < tol) _dragMode = eModeTopRight;
+        else if (abs(px - x2) < tol && abs(py - y1) < tol) _dragMode = eModeBottomRight;
+        else if (px >= x1 && px <= x2 && py >= y1 && py <= y2) _dragMode = eModeCenter;
+        else _dragMode = eModeNone;
+
+        if (_dragMode != eModeNone) {
             _effect->redrawOverlays();
             return true;
         }
-
         return false;
     }
 
     virtual bool penMotion(const OFX::PenArgs& args) override {
-        if (_isDragging) {
-            // Move center
-            _rectCenter->setValue(args.penPosition.x, args.penPosition.y);
-            _effect->redrawOverlays();
-            return true;
+        if (_dragMode == eModeNone) return false;
+
+        OfxRectD rod = _srcClip->getRegionOfDefinition(args.time);
+        double rw = rod.x2 - rod.x1;
+        double rh = rod.y2 - rod.y1;
+        if (rw <= 0 || rh <= 0) return false;
+
+        double ncx, ncy, nw, nh;
+        _rectCenter->getValue(ncx, ncy);
+        nw = _rectWidth->getValue();
+        nh = _rectHeight->getValue();
+
+        double px = args.penPosition.x;
+        double py = args.penPosition.y;
+
+        // Convert pen to normalized
+        double npx = (px - rod.x1) / rw;
+        double npy = (py - rod.y1) / rh;
+
+        if (_dragMode == eModeCenter) {
+            _rectCenter->setValue(npx, npy);
+        } else {
+            // Resize logic
+            double x1 = ncx - nw * 0.5;
+            double x2 = ncx + nw * 0.5;
+            double y1 = ncy - nh * 0.5;
+            double y2 = ncy + nh * 0.5;
+
+            if (_dragMode == eModeBottomLeft) { x1 = npx; y1 = npy; }
+            if (_dragMode == eModeTopLeft) { x1 = npx; y2 = npy; }
+            if (_dragMode == eModeTopRight) { x2 = npx; y2 = npy; }
+            if (_dragMode == eModeBottomRight) { x2 = npx; y1 = npy; }
+
+            double newNcx = (x1 + x2) * 0.5;
+            double newNcy = (y1 + y2) * 0.5;
+            double newNw = abs(x2 - x1);
+            double newNh = abs(y2 - y1);
+
+            _rectCenter->setValue(newNcx, newNcy);
+            _rectWidth->setValue(newNw);
+            _rectHeight->setValue(newNh);
         }
-        return false;
+
+        _effect->redrawOverlays();
+        return true;
     }
 
     virtual bool penUp(const OFX::PenArgs& args) override {
-        if (_isDragging) {
-            _isDragging = false;
+        if (_dragMode != eModeNone) {
+            _dragMode = eModeNone;
             _effect->redrawOverlays();
             return true;
         }
@@ -131,51 +219,25 @@ public:
     }
 };
 
-// Overlay descriptor subclass
 class MugOverlayDescriptor : public OFX::DefaultEffectOverlayDescriptor<MugOverlayDescriptor, MugInteract> {};
 
-
-// ==============================================================================
-// MugPlugin: The Image Effect
-// ==============================================================================
 class MugPlugin : public OFX::ImageEffect {
 protected:
     OFX::Clip *dstClip_;
     OFX::Clip *srcClip_;
-
-    OFX::Double2DParam *rectCenter_;
-    OFX::DoubleParam *rectWidth_;
-    OFX::DoubleParam *rectHeight_;
-
 public:
-    MugPlugin(OfxImageEffectHandle handle)
-        : OFX::ImageEffect(handle)
-    {
+    MugPlugin(OfxImageEffectHandle handle) : OFX::ImageEffect(handle) {
         dstClip_ = fetchClip(kOfxImageEffectOutputClipName);
         srcClip_ = fetchClip(kOfxImageEffectSimpleSourceClipName);
-
-        rectCenter_ = fetchDouble2DParam("rectCenter");
-        rectWidth_ = fetchDoubleParam("rectWidth");
-        rectHeight_ = fetchDoubleParam("rectHeight");
     }
-
-    virtual void render(const OFX::RenderArguments &args) override {
-        // We do a dummy pass-through or simple render here if needed.
-        // But since this plugin is primarily for UI testing, we don't need a complex render.
-        // Let's just do identity or nothing.
-    }
-
+    virtual void render(const OFX::RenderArguments &args) override {}
     virtual bool isIdentity(const OFX::IsIdentityArguments &args, OFX::Clip * &identityClip, double &identityTime) override {
-        // Act as a pass-through filter so we can see the image
         identityClip = srcClip_;
         identityTime = args.time;
         return true;
     }
 };
 
-// ==============================================================================
-// MugPluginFactory
-// ==============================================================================
 using namespace OFX;
 
 class MugPluginFactory : public OFX::PluginFactoryHelper<MugPluginFactory> {
@@ -186,58 +248,36 @@ public:
     virtual void describe(OFX::ImageEffectDescriptor& desc) override {
         desc.setLabels("Mug Min Plugin 8", "Mug Min Plugin 8", "Mug Min Plugin 8");
         desc.setPluginGrouping("MugLab");
-
         desc.addSupportedContext(eContextFilter);
         desc.addSupportedContext(eContextGeneral);
-
         desc.addSupportedBitDepth(eBitDepthFloat);
         desc.addSupportedBitDepth(eBitDepthUByte);
         desc.addSupportedBitDepth(eBitDepthUShort);
-
-        desc.setSingleInstance(false);
-        desc.setHostFrameThreading(false);
-        desc.setSupportsMultiResolution(true);
-        desc.setSupportsTiles(true);
-        desc.setTemporalClipAccess(false);
-        desc.setRenderTwiceAlways(false);
-        desc.setSupportsMultipleClipPARs(false);
-
-        // Attach our custom interact
         desc.setOverlayInteractDescriptor(new MugOverlayDescriptor());
     }
 
     virtual void describeInContext(OFX::ImageEffectDescriptor& desc, OFX::ContextEnum context) override {
-        // Clips
-        ClipDescriptor *srcClip = desc.defineClip(kOfxImageEffectSimpleSourceClipName);
-        srcClip->addSupportedComponent(ePixelComponentRGBA);
-        srcClip->addSupportedComponent(ePixelComponentAlpha);
-        srcClip->setTemporalClipAccess(false);
-        srcClip->setSupportsTiles(true);
-        srcClip->setIsMask(false);
+        desc.defineClip(kOfxImageEffectSimpleSourceClipName)->addSupportedComponent(ePixelComponentRGBA);
+        desc.defineClip(kOfxImageEffectOutputClipName)->addSupportedComponent(ePixelComponentRGBA);
 
-        ClipDescriptor *dstClip = desc.defineClip(kOfxImageEffectOutputClipName);
-        dstClip->addSupportedComponent(ePixelComponentRGBA);
-        dstClip->addSupportedComponent(ePixelComponentAlpha);
-        dstClip->setSupportsTiles(true);
-
-        // Parameters
         PageParamDescriptor *page = desc.definePageParam("Controls");
 
         Double2DParamDescriptor *centerParam = desc.defineDouble2DParam("rectCenter");
-        centerParam->setLabels("Center Position", "Center Position", "Center Position");
+        centerParam->setLabels("Center", "Center", "Center");
         centerParam->setDefault(0.5, 0.5);
+        centerParam->setRange(0, 0, 1, 1);
         page->addChild(*centerParam);
 
         DoubleParamDescriptor *widthParam = desc.defineDoubleParam("rectWidth");
         widthParam->setLabels("Width", "Width", "Width");
         widthParam->setDefault(0.5);
-        widthParam->setRange(0.0, 1.0);
+        widthParam->setRange(0, 1);
         page->addChild(*widthParam);
 
         DoubleParamDescriptor *heightParam = desc.defineDoubleParam("rectHeight");
         heightParam->setLabels("Height", "Height", "Height");
         heightParam->setDefault(0.5);
-        heightParam->setRange(0.0, 1.0);
+        heightParam->setRange(0, 1);
         page->addChild(*heightParam);
     }
 
@@ -246,9 +286,6 @@ public:
     }
 };
 
-// ==============================================================================
-// Plugin Registration
-// ==============================================================================
 namespace OFX {
     namespace Plugin {
         void getPluginIDs(OFX::PluginFactoryArray &ids) {
