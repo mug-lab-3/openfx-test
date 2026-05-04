@@ -42,18 +42,16 @@ class MugGreenScaler : public OFX::ImageProcessor {
         src_img_ = v;
     }
 
-    virtual void multiThreadProcessImages(OfxRectI procWindow) override {
+    void multiThreadProcessImages(OfxRectI procWindow) override {
         const int width = procWindow.x2 - procWindow.x1;
 
         for (int y = procWindow.y1; y < procWindow.y2; y++) {
             if (_effect.abort()) break;
 
             // Use std::span for safer memory access
-            std::span<PIX> dst_row(static_cast<PIX*>(_dstImg->getPixelAddress(procWindow.x1, y)),
-                                   width * nComponents);
-            std::span<const PIX> src_row(
-                static_cast<const PIX*>(src_img_->getPixelAddress(procWindow.x1, y)),
-                width * nComponents);
+            std::span<PIX> dst_row(static_cast<PIX*>(_dstImg->getPixelAddress(procWindow.x1, y)), width * nComponents);
+            std::span<const PIX> src_row(static_cast<const PIX*>(src_img_->getPixelAddress(procWindow.x1, y)),
+                                         width * nComponents);
 
             for (int x = 0; x < width; ++x) {
                 const int pixel_offset = x * nComponents;

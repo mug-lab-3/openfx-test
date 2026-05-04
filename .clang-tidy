@@ -1,0 +1,21 @@
+Checks: >
+  -*,
+  bugprone-*,
+  modernize-*,
+  performance-*,
+  readability-*,
+  google-*
+
+WarningsAsErrors: ""
+
+CheckOptions:
+  - key: readability-identifier-naming.MemberPrefix
+    value: ""
+  - key: readability-identifier-naming.MemberSuffix
+    value: "_"
+  - key: readability-identifier-naming.MemberCase
+    value: "snake_case"
+  - key: readability-magic-numbers.IgnoreAllFloatingPointValues
+    value: "true"
+  - key: modernize-use-override.IgnoreDestructors
+    value: "true"
