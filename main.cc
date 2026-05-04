@@ -340,51 +340,44 @@ class MugPlugin : public OFX::ImageEffect {
         // ==============================================================================
         // 2. Vector Processing (Blend2D) - Hybrid Sample
         // ==============================================================================
-        if (dstBitDepth == OFX::eBitDepthUByte && dstComponents == OFX::ePixelComponentRGBA) {
-            double ncx, ncy, nw, nh;
-            fetchDouble2DParam("rectCenter")->getValueAtTime(args.time, ncx, ncy);
-            nw = fetchDoubleParam("rectWidth")->getValueAtTime(args.time);
-            nh = fetchDoubleParam("rectHeight")->getValueAtTime(args.time);
-
+        if (dstBitDepth == OFX::eBitDepthUByte || dstBitDepth == OFX::eBitDepthFloat) {
             OfxRectI bounds = dst->getBounds();
             int width = bounds.x2 - bounds.x1;
             int height = bounds.y2 - bounds.y1;
 
-            // OpenFX images can be larger than the render window.
-            // We map the Blend2D image to the entire destination buffer.
-            void* data = dst->getPixelAddress(bounds.x1, bounds.y1);
-            intptr_t stride = dst->getRowBytes();
-
-            BLImage img;
-            // Note: Blend2D's PRGB32 is often compatible with 8-bit RGBA on many systems.
-            if (img.create_from_data(width, height, BL_FORMAT_PRGB32, data, stride) == BL_SUCCESS) {
+            if (width > 0 && height > 0) {
+                BLImage img(width, height, BL_FORMAT_PRGB32);
                 BLContext ctx(img);
 
-                // For simplicity in this sample, we map normalized 0..1 to image pixels.
+                // Clear temporary buffer (transparent)
+                ctx.set_comp_op(BL_COMP_OP_SRC_COPY);
+                ctx.fill_all(BLRgba32(0x00000000));
+                ctx.set_comp_op(BL_COMP_OP_SRC_OVER);
+
+                // --- Fetch Parameters ---
+                double ncx, ncy, nw, nh;
+                fetchDouble2DParam("rectCenter")->getValueAtTime(args.time, ncx, ncy);
+                nw = fetchDoubleParam("rectWidth")->getValueAtTime(args.time);
+                nh = fetchDoubleParam("rectHeight")->getValueAtTime(args.time);
+
                 double cx = ncx * width;
-                double cy = (1.0 - ncy) * height; // Simple flip for top-down coordinate space
+                double cy = (1.0 - ncy) * height; 
                 double w = nw * width;
                 double h = nh * height;
 
                 // --- Draw Shapes ---
-                ctx.set_comp_op(BL_COMP_OP_SRC_OVER);
-
-                // Draw a semi-transparent blue rectangle (Vector Rect)
                 ctx.set_fill_style(BLRgba32(0x800000FF)); 
-                ctx.fill_round_rect(BLRoundRect(cx - w * 0.5, cy - h * 0.5, w, h, 20.0));
+                ctx.fill_round_rect(BLRoundRect(cx - (w * 0.5), cy - (h * 0.5), w, h, 20.0));
 
-                // Draw a bright yellow circle (Vector Circle with AA)
                 ctx.set_fill_style(BLRgba32(0xFFFFFF00));
                 ctx.fill_circle(cx, cy, w * 0.2);
 
-                // Draw an outline
                 ctx.set_stroke_style(BLRgba32(0xFFFFFFFF));
                 ctx.set_stroke_width(2.0);
                 ctx.stroke_circle(cx, cy, w * 0.2);
 
                 // --- Draw Text ---
                 BLFontFace face;
-                // Try common Linux paths for the sample (adjust for Windows distribution)
                 if (face.create_from_file("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf") == BL_SUCCESS ||
                     face.create_from_file("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf") == BL_SUCCESS ||
                     face.create_from_file("/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf") == BL_SUCCESS) 
@@ -392,10 +385,50 @@ class MugPlugin : public OFX::ImageEffect {
                     BLFont font;
                     font.create_from_face(face, 24.0f);
                     ctx.set_fill_style(BLRgba32(0xFFFFFFFF));
-                    ctx.fill_utf8_text(BLPoint(cx - w * 0.4, cy + h * 0.4), font, "Blend2D Hybrid Vector Text");
+                    ctx.fill_utf8_text(BLPoint(cx - (w * 0.4), cy + (h * 0.4)), font, "Blend2D Hybrid Vector Text");
                 }
-
                 ctx.end();
+
+                // --- Composite back to Destination ---
+                BLImageData img_data;
+                img.get_data(&img_data);
+                
+                for (int y = 0; y < height; y++) {
+                    uint32_t* src_line = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(img_data.pixel_data) + (y * img_data.stride));
+                    
+                    // Flip Y for Destination: OpenFX y=0 is Bottom, Blend2D y=0 is Top.
+                    int dst_y = (height - 1) - y;
+
+                    if (dstBitDepth == OFX::eBitDepthUByte) {
+                        uint8_t* dst_line = reinterpret_cast<uint8_t*>(dst->getPixelAddress(bounds.x1, bounds.y1 + dst_y));
+                        for (int x = 0; x < width; x++) {
+                            uint32_t pixel = src_line[x];
+                            uint8_t a = static_cast<uint8_t>((pixel >> 24) & 0xFF);
+                            if (a > 0) {
+                                // Simple Alpha Blend (8-bit)
+                                for (int c = 0; c < 4; c++) {
+                                    uint8_t s = static_cast<uint8_t>((pixel >> (c * 8)) & 0xFF);
+                                    uint8_t d = dst_line[x * 4 + c];
+                                    dst_line[x * 4 + c] = static_cast<uint8_t>((s * 255 + d * (255 - a)) / 255);
+                                }
+                            }
+                        }
+                    } else if (dstBitDepth == OFX::eBitDepthFloat) {
+                        float* dst_line = reinterpret_cast<float*>(dst->getPixelAddress(bounds.x1, bounds.y1 + dst_y));
+                        for (int x = 0; x < width; x++) {
+                            uint32_t pixel = src_line[x];
+                            float a = static_cast<float>((pixel >> 24) & 0xFF) / 255.0f;
+                            if (a > 0.0f) {
+                                // Simple Alpha Blend (Float)
+                                for (int c = 0; c < 4; c++) {
+                                    float s = static_cast<float>((pixel >> (c * 8)) & 0xFF) / 255.0f;
+                                    float d = dst_line[x * 4 + c];
+                                    dst_line[x * 4 + c] = s + d * (1.0f - a);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
