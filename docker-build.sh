@@ -3,22 +3,20 @@ set -e
 
 IMAGE_NAME="resolve-ofx-win64-builder"
 
-# Build the docker image if it doesn't exist
-if [[ "$(docker images -q $IMAGE_NAME 2> /dev/null)" == "" ]]; then
-  echo "Building Docker image: $IMAGE_NAME..."
-  docker build -t $IMAGE_NAME .
-fi
-
-echo "Running build inside container..."
+# Build the image (generic)
+echo "Ensuring Docker image is ready..."
+docker build -t $IMAGE_NAME .
 
 # Run the build inside the container
-# Mount current directory to /workspace.
-# Also mount a ccache volume for faster rebuilds.
-mkdir -p .ccache
+# --user $(id -u):$(id -g) makes files owned by you on the host.
+# We set HOME to /tmp because the container doesn't have your host home dir.
+mkdir -p .ccache build
 docker run --rm \
+    --user $(id -u):$(id -g) \
     -v "$(pwd):/workspace" \
-    -v "$(pwd)/.ccache:/root/.ccache" \
-    -e CCACHE_DIR=/root/.ccache \
+    -v "$(pwd)/.ccache:/tmp/.ccache" \
+    -e HOME=/tmp \
+    -e CCACHE_DIR=/tmp/.ccache \
     $IMAGE_NAME
 
 echo "Build complete. Output: build/MugPlugin.ofx"

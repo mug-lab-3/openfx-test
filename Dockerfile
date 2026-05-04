@@ -20,6 +20,7 @@ RUN sed -i 's|http://archive.ubuntu.com/ubuntu/|http://ftp.udx.icscoe.jp/Linux/u
     git \
     ca-certificates \
     curl \
+    && chmod -R 777 /opt \
     && rm -rf /var/lib/apt/lists/*
 
 # Set Clang 18 and LLVM tools as default
