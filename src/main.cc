@@ -1,4 +1,5 @@
 #include <cmath>
+#include <algorithm>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -25,106 +26,100 @@
 #include "ofxsInteract.h"
 #include "ofxsProcessing.h"
 
-// --- Blend2D to OpenFX Bridge: Parallel Compositing ---
-template <typename T, int maxVal>
-class Blend2DCompositor : public OFX::ImageProcessor {
-    BLImage& _srcImg;
+
+
+// --- Unified Performance Engine: 1-Pass Processing ---
+template <typename PIX, int nComponents, int maxVal>
+class MugUnifiedProcessor : public OFX::ImageProcessor {
+    OFX::Image* _srcImg;
+    BLImage& _blImg;
     OfxRectI _bounds;
+    OfxRectI _drawWindow;
     int _height;
-public:
-    Blend2DCompositor(OFX::ImageEffect& effect, BLImage& src, OfxRectI bounds, int h) 
-        : OFX::ImageProcessor(effect), _srcImg(src), _bounds(bounds), _height(h) {}
-
-    void multiThreadProcessImages(OfxRectI window) override {
-        BLImageData data;
-        _srcImg.get_data(&data);
-        int win_w = window.x2 - window.x1;
-        
-        for (int y = window.y1; y < window.y2; y++) {
-            int bl_y = (_height - 1) - (y - _bounds.y1);
-            if (bl_y < 0 || bl_y >= _height) continue;
-
-            uint32_t* src_line = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(data.pixel_data) + (bl_y * data.stride));
-            T* d = reinterpret_cast<T*>(_dstImg->getPixelAddress(window.x1, y));
-
-            for (int x = 0; x < win_w; x++) {
-                uint32_t p = src_line[x + (window.x1 - _bounds.x1)];
-                uint32_t sa_8 = (p >> 24) & 0xFF;
-                if (sa_8 == 0) { d += 4; continue; }
-
-                if constexpr (std::is_same_v<T, float>) {
-                    float sa = sa_8 / 255.0f;
-                    float inv_sa = 1.0f - sa;
-                    d[0] = (((p >> 16) & 0xFF) / 255.0f) + (d[0] * inv_sa);
-                    d[1] = (((p >> 8) & 0xFF) / 255.0f) + (d[1] * inv_sa);
-                    d[2] = ((p & 0xFF) / 255.0f) + (d[2] * inv_sa);
-                    d[3] = sa + (d[3] * inv_sa);
-                } else {
-                    uint32_t sa = (maxVal == 255) ? sa_8 : (sa_8 * 257);
-                    uint32_t inv_sa = maxVal - sa;
-                    uint32_t sr = ((p >> 16) & 0xFF);
-                    uint32_t sg = ((p >> 8) & 0xFF);
-                    uint32_t sb = (p & 0xFF);
-                    if (maxVal != 255) { sr *= 257; sg *= 257; sb *= 257; }
-
-                    if (sa_8 == 255) {
-                        d[0] = (T)sr; d[1] = (T)sg; d[2] = (T)sb; d[3] = (T)maxVal;
-                    } else {
-                        d[0] = (T)(sr + (d[0] * inv_sa + (maxVal / 2)) / maxVal);
-                        d[1] = (T)(sg + (d[1] * inv_sa + (maxVal / 2)) / maxVal);
-                        d[2] = (T)(sb + (d[2] * inv_sa + (maxVal / 2)) / maxVal);
-                        d[3] = (T)(sa + (d[3] * inv_sa + (maxVal / 2)) / maxVal);
-                    }
-                }
-                d += 4;
-            }
-        }
-    }
-};
-
-// ==============================================================================
-// Image Processor: Multi-threaded pixel processing
-// ==============================================================================
-// Concepts: Ensure PIX is a numeric type (integer or floating point)
-template <typename T>
-concept OfxPixel = std::integral<T> || std::floating_point<T>;
-
-template <OfxPixel PIX, int nComponents, int maxVal>
-class MugGreenScaler : public OFX::ImageProcessor {
-   protected:
-    OFX::Image* src_img_{nullptr};
 
    public:
-    explicit MugGreenScaler(OFX::ImageEffect& instance) : OFX::ImageProcessor(instance) {
+    MugUnifiedProcessor(OFX::ImageEffect& effect, OFX::Image* src, BLImage& bl, OfxRectI bounds, OfxRectI drawWin)
+        : OFX::ImageProcessor(effect), _srcImg(src), _blImg(bl), _bounds(bounds), _drawWindow(drawWin) {
+        _height = _bounds.y2 - _bounds.y1;
     }
 
-    void setSrcImg(OFX::Image* v) {
-        src_img_ = v;
-    }
+    void multiThreadProcessImages(OfxRectI window) override {
+        BLImageData blData;
+        _blImg.get_data(&blData);
 
-    void multiThreadProcessImages(OfxRectI procWindow) override {
-        const int width = procWindow.x2 - procWindow.x1;
+        for (int y = window.y1; y < window.y2; y++) {
+            if (_effect.abort()) break;
 
-        for (int y = procWindow.y1; y < procWindow.y2; y++) {
-            if (_effect.abort()) {
-                break;
+            PIX* dst_p = reinterpret_cast<PIX*>(_dstImg->getPixelAddress(window.x1, y));
+            const PIX* src_p = reinterpret_cast<const PIX*>(_srcImg->getPixelAddress(window.x1, y));
+
+            bool rowInROI = (y >= _drawWindow.y1 && y < _drawWindow.y2);
+            int roi_x1 = std::clamp(_drawWindow.x1, window.x1, window.x2);
+            int roi_x2 = std::clamp(_drawWindow.x2, window.x1, window.x2);
+
+            int x = window.x1;
+
+            // Segment 1: Left of ROI
+            for (; x < roi_x1; x++) {
+                dst_p[0] = src_p[0];
+                dst_p[1] = static_cast<PIX>(src_p[1] * 0.5);
+                dst_p[2] = src_p[2];
+                dst_p[3] = src_p[3];
+                dst_p += 4;
+                src_p += 4;
             }
 
-            // Use std::span for safer memory access
-            std::span<PIX> dst_row(static_cast<PIX*>(_dstImg->getPixelAddress(procWindow.x1, y)), width * nComponents);
-            std::span<const PIX> src_row(static_cast<const PIX*>(src_img_->getPixelAddress(procWindow.x1, y)),
-                                         width * nComponents);
+            // Segment 2: Inside ROI
+            if (rowInROI && roi_x1 < roi_x2) {
+                int bl_y = (_height - 1) - (y - _bounds.y1);
+                uint32_t* bl_line =
+                    reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(blData.pixel_data) + (bl_y * blData.stride));
 
-            for (int x = 0; x < width; ++x) {
-                const int pixel_offset = x * nComponents;
-                for (int c = 0; c < nComponents; ++c) {
-                    const int idx = pixel_offset + c;
-                    if (c == 1) {  // Green channel
-                        dst_row[idx] = static_cast<PIX>(src_row[idx] * 0.5);
-                    } else {
-                        dst_row[idx] = src_row[idx];
+                for (; x < roi_x2; x++) {
+                    PIX r = src_p[0], g = static_cast<PIX>(src_p[1] * 0.5), b = src_p[2], a = src_p[3];
+
+                    uint32_t p = bl_line[x - _bounds.x1];
+                    uint32_t sa_8 = (p >> 24) & 0xFF;
+                    if (sa_8 > 0) {
+                        if constexpr (std::is_same_v<PIX, float>) {
+                            float sa = sa_8 / 255.0f;
+                            float inv_sa = 1.0f - sa;
+                            r = (((p >> 16) & 0xFF) / 255.0f) + (r * inv_sa);
+                            g = (((p >> 8) & 0xFF) / 255.0f) + (g * inv_sa);
+                            b = ((p & 0xFF) / 255.0f) + (b * inv_sa);
+                            a = sa + (a * inv_sa);
+                        } else {
+                            uint32_t sa = (maxVal == 255) ? sa_8 : (sa_8 * 257);
+                            uint32_t inv_sa = maxVal - sa;
+                            uint32_t sr = ((p >> 16) & 0xFF), sg = ((p >> 8) & 0xFF), sb = (p & 0xFF);
+                            if (maxVal != 255) {
+                                sr *= 257;
+                                sg *= 257;
+                                sb *= 257;
+                            }
+                            r = (PIX)(sr + (r * inv_sa + (maxVal / 2)) / maxVal);
+                            g = (PIX)(sg + (g * inv_sa + (maxVal / 2)) / maxVal);
+                            b = (PIX)(sb + (b * inv_sa + (maxVal / 2)) / maxVal);
+                            a = (PIX)(sa + (a * inv_sa + (maxVal / 2)) / maxVal);
+                        }
                     }
+                    dst_p[0] = r;
+                    dst_p[1] = g;
+                    dst_p[2] = b;
+                    dst_p[3] = a;
+                    dst_p += 4;
+                    src_p += 4;
                 }
+            }
+
+            // Segment 3: Right of ROI
+            for (; x < window.x2; x++) {
+                dst_p[0] = src_p[0];
+                dst_p[1] = static_cast<PIX>(src_p[1] * 0.5);
+                dst_p[2] = src_p[2];
+                dst_p[3] = src_p[3];
+                dst_p += 4;
+                src_p += 4;
             }
         }
     }
@@ -361,73 +356,30 @@ class MugPlugin : public OFX::ImageEffect {
         std::unique_ptr<OFX::Image> src(src_clip_->fetchImage(args.time));
 
         if (dstComponents == OFX::ePixelComponentRGBA && src) {
-            constexpr int kMaxUByte = 255;
-            constexpr int kMaxUShort = 65535;
-            constexpr float kMaxFloat = 1.0F;
-
-            switch (dstBitDepth) {
-                case OFX::eBitDepthUByte: {
-                    MugGreenScaler<unsigned char, 4, kMaxUByte> processor(*this);
-                    processor.setDstImg(dst.get());
-                    processor.setSrcImg(src.get());
-                    processor.setRenderWindow(args.renderWindow);
-                    processor.process();
-                    break;
-                }
-                case OFX::eBitDepthUShort: {
-                    MugGreenScaler<uint16_t, 4, kMaxUShort> processor(*this);
-                    processor.setDstImg(dst.get());
-                    processor.setSrcImg(src.get());
-                    processor.setRenderWindow(args.renderWindow);
-                    processor.process();
-                    break;
-                }
-                case OFX::eBitDepthFloat: {
-                    MugGreenScaler<float, 4, static_cast<int>(kMaxFloat)> processor(*this);
-                    processor.setDstImg(dst.get());
-                    processor.setSrcImg(src.get());
-                    processor.setRenderWindow(args.renderWindow);
-                    processor.process();
-                    break;
-                }
-                default:
-                    break;
-            }
-        }
-
-        // ==============================================================================
-        // 2. Vector Processing (Blend2D) - Hybrid Sample (Multi-Threaded Copy)
-        // ==============================================================================
-        if (dstBitDepth == OFX::eBitDepthUByte || dstBitDepth == OFX::eBitDepthUShort || dstBitDepth == OFX::eBitDepthFloat) {
             OfxRectI bounds = dst->getBounds();
             int width = bounds.x2 - bounds.x1;
             int height = bounds.y2 - bounds.y1;
 
             if (width > 0 && height > 0) {
-                // Reuse or resize cached image
+                // 1. Prepare Blend2D Canvas
                 if (_cachedImg.width() != width || _cachedImg.height() != height) {
                     _cachedImg.create(width, height, BL_FORMAT_PRGB32);
                 }
-
-                // Initialize context with multi-threading enabled
                 BLContextCreateInfo createInfo;
                 createInfo.flags = BL_CONTEXT_CREATE_NO_FLAGS;
-                createInfo.thread_count = 0; // Auto-detect based on CPU cores
+                createInfo.thread_count = 0;
                 BLContext ctx(_cachedImg, createInfo);
-
                 ctx.set_comp_op(BL_COMP_OP_SRC_COPY);
                 ctx.fill_all(BLRgba32(0x00000000));
                 ctx.set_comp_op(BL_COMP_OP_SRC_OVER);
 
+                // 2. Draw Vector Graphics
                 double ncx, ncy, nw, nh;
                 fetchDouble2DParam("rectCenter")->getValueAtTime(args.time, ncx, ncy);
                 nw = fetchDoubleParam("rectWidth")->getValueAtTime(args.time);
                 nh = fetchDoubleParam("rectHeight")->getValueAtTime(args.time);
-
-                double cx = ncx * width;
-                double cy = (1.0 - ncy) * height; 
-                double w = nw * width;
-                double h = nh * height;
+                double cx = ncx * width, cy = (1.0 - ncy) * height;
+                double w = nw * width, h = nh * height;
 
                 ctx.set_fill_style(BLRgba32(0x800000FF));
                 ctx.fill_round_rect(BLRoundRect(cx - (w * 0.5), cy - (h * 0.5), w, h, 20.0));
@@ -437,14 +389,11 @@ class MugPlugin : public OFX::ImageEffect {
                 ctx.set_stroke_width(2.0);
                 ctx.stroke_circle(cx, cy, w * 0.2);
 
-                static BLFontFace face;
-                static bool fontLoaded = false;
+                static BLFontFace face; static bool fontLoaded = false;
                 if (!fontLoaded) {
                     if (face.create_from_file("C:/Windows/Fonts/arial.ttf") == BL_SUCCESS ||
                         face.create_from_file("C:/Windows/Fonts/msgothic.ttc") == BL_SUCCESS ||
-                        face.create_from_file("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf") == BL_SUCCESS) {
-                        fontLoaded = true;
-                    }
+                        face.create_from_file("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf") == BL_SUCCESS) fontLoaded = true;
                 }
                 if (fontLoaded) {
                     BLFont font; font.create_from_face(face, 24.0f);
@@ -453,43 +402,35 @@ class MugPlugin : public OFX::ImageEffect {
                 }
                 ctx.end();
 
-                // --- ROI Optimization: Only composite the area we actually drew on ---
-                // Calculate bounding box in pixel coordinates (Blend2D space)
-                double padding = 20.0; // for stroke and text
+                // 3. ROI Calculation (Map Blend2D to OFX)
+                double padding = 20.0;
                 int roi_x1 = static_cast<int>(std::floor(cx - (w * 0.5) - padding));
                 int roi_y1 = static_cast<int>(std::floor(cy - (h * 0.5) - padding));
                 int roi_x2 = static_cast<int>(std::ceil(cx + (w * 0.5) + padding));
                 int roi_y2 = static_cast<int>(std::ceil(cy + (h * 0.5) + padding));
 
-                // Map Blend2D ROI to OFX Coordinates (flipped Y)
                 OfxRectI drawWindow;
-                drawWindow.x1 = std::max(args.renderWindow.x1, bounds.x1 + roi_x1);
-                drawWindow.x2 = std::min(args.renderWindow.x2, bounds.x1 + roi_x2);
-                // In OFX, y1 is bottom. In Blend2D, roi_y1 is top.
-                // Blend2D Top (roi_y1) -> OFX Top (bounds.y2 - roi_y1)
-                // Blend2D Bottom (roi_y2) -> OFX Bottom (bounds.y2 - roi_y2)
-                int ofx_y_top = bounds.y2 - roi_y1;
-                int ofx_y_bottom = bounds.y2 - roi_y2;
-                drawWindow.y1 = std::max(args.renderWindow.y1, ofx_y_bottom);
-                drawWindow.y2 = std::min(args.renderWindow.y2, ofx_y_top);
+                drawWindow.x1 = bounds.x1 + roi_x1;
+                drawWindow.x2 = bounds.x1 + roi_x2;
+                drawWindow.y1 = bounds.y2 - roi_y2;
+                drawWindow.y2 = bounds.y2 - roi_y1;
 
-                if (drawWindow.x1 < drawWindow.x2 && drawWindow.y1 < drawWindow.y2) {
-                    if (dstBitDepth == OFX::eBitDepthUByte) {
-                        Blend2DCompositor<uint8_t, 255> compositor(*this, _cachedImg, bounds, height);
-                        compositor.setDstImg(dst.get());
-                        compositor.setRenderWindow(drawWindow);
-                        compositor.process();
-                    } else if (dstBitDepth == OFX::eBitDepthUShort) {
-                        Blend2DCompositor<uint16_t, 65535> compositor(*this, _cachedImg, bounds, height);
-                        compositor.setDstImg(dst.get());
-                        compositor.setRenderWindow(drawWindow);
-                        compositor.process();
-                    } else if (dstBitDepth == OFX::eBitDepthFloat) {
-                        Blend2DCompositor<float, 1> compositor(*this, _cachedImg, bounds, height);
-                        compositor.setDstImg(dst.get());
-                        compositor.setRenderWindow(drawWindow);
-                        compositor.process();
-                    }
+                // 4. Unified Processing Pass
+                if (dstBitDepth == OFX::eBitDepthUByte) {
+                    MugUnifiedProcessor<uint8_t, 4, 255> processor(*this, src.get(), _cachedImg, bounds, drawWindow);
+                    processor.setDstImg(dst.get());
+                    processor.setRenderWindow(args.renderWindow);
+                    processor.process();
+                } else if (dstBitDepth == OFX::eBitDepthUShort) {
+                    MugUnifiedProcessor<uint16_t, 4, 65535> processor(*this, src.get(), _cachedImg, bounds, drawWindow);
+                    processor.setDstImg(dst.get());
+                    processor.setRenderWindow(args.renderWindow);
+                    processor.process();
+                } else if (dstBitDepth == OFX::eBitDepthFloat) {
+                    MugUnifiedProcessor<float, 4, 1> processor(*this, src.get(), _cachedImg, bounds, drawWindow);
+                    processor.setDstImg(dst.get());
+                    processor.setRenderWindow(args.renderWindow);
+                    processor.process();
                 }
             }
         }
