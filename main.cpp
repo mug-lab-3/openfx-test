@@ -1,6 +1,4 @@
-#include <stdio.h>
 #include <math.h>
-#include <algorithm>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -16,9 +14,7 @@
 #endif
 
 #include "ofxsImageEffect.h"
-#include "ofxsMultiThread.h"
 #include "ofxsInteract.h"
-#include "ofxsLog.h"
 #include "ofxsCore.h"
 #include "ofxsProcessing.h"
 
