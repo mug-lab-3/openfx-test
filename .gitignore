@@ -3,8 +3,9 @@ openfx-OFX_Release_1.5.1/
 build/
 .cache/
 .ccache/
-.vscode/
+.sdk/
 
 # Legacy SDK and 3rdparty (will be removed soon as they are now in Docker)
 3rdparty/
 openfx-*/
+.sdk/

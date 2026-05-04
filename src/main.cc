@@ -13,6 +13,8 @@
 #include <GL/gl.h>
 #endif
 
+#include <blend2d.h>
+
 #include <concepts>
 #include <cstdint>
 #include <memory>
@@ -22,8 +24,6 @@
 #include "ofxsImageEffect.h"
 #include "ofxsInteract.h"
 #include "ofxsProcessing.h"
-
-#include <blend2d.h>
 
 // ==============================================================================
 // Image Processor: Multi-threaded pixel processing
@@ -361,12 +361,12 @@ class MugPlugin : public OFX::ImageEffect {
                 nh = fetchDoubleParam("rectHeight")->getValueAtTime(args.time);
 
                 double cx = ncx * width;
-                double cy = (1.0 - ncy) * height; 
+                double cy = (1.0 - ncy) * height;
                 double w = nw * width;
                 double h = nh * height;
 
                 // --- Draw Shapes ---
-                ctx.set_fill_style(BLRgba32(0x800000FF)); 
+                ctx.set_fill_style(BLRgba32(0x800000FF));
                 ctx.fill_round_rect(BLRoundRect(cx - (w * 0.5), cy - (h * 0.5), w, h, 20.0));
 
                 ctx.set_fill_style(BLRgba32(0xFFFFFF00));
@@ -378,10 +378,10 @@ class MugPlugin : public OFX::ImageEffect {
 
                 // --- Draw Text ---
                 BLFontFace face;
-                if (face.create_from_file("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf") == BL_SUCCESS ||
+                if (face.create_from_file("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf") ==
+                        BL_SUCCESS ||
                     face.create_from_file("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf") == BL_SUCCESS ||
-                    face.create_from_file("/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf") == BL_SUCCESS) 
-                {
+                    face.create_from_file("/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf") == BL_SUCCESS) {
                     BLFont font;
                     font.create_from_face(face, 24.0f);
                     ctx.set_fill_style(BLRgba32(0xFFFFFFFF));
@@ -392,15 +392,17 @@ class MugPlugin : public OFX::ImageEffect {
                 // --- Composite back to Destination ---
                 BLImageData img_data;
                 img.get_data(&img_data);
-                
+
                 for (int y = 0; y < height; y++) {
-                    uint32_t* src_line = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(img_data.pixel_data) + (y * img_data.stride));
-                    
+                    uint32_t* src_line = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(img_data.pixel_data) +
+                                                                     (y * img_data.stride));
+
                     // Flip Y for Destination: OpenFX y=0 is Bottom, Blend2D y=0 is Top.
                     int dst_y = (height - 1) - y;
 
                     if (dstBitDepth == OFX::eBitDepthUByte) {
-                        uint8_t* dst_line = reinterpret_cast<uint8_t*>(dst->getPixelAddress(bounds.x1, bounds.y1 + dst_y));
+                        uint8_t* dst_line =
+                            reinterpret_cast<uint8_t*>(dst->getPixelAddress(bounds.x1, bounds.y1 + dst_y));
                         for (int x = 0; x < width; x++) {
                             uint32_t pixel = src_line[x];
                             uint8_t a = static_cast<uint8_t>((pixel >> 24) & 0xFF);

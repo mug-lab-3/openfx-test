@@ -13,7 +13,7 @@ fi
 echo "--- Starting OpenFX Build (Windows x64) ---"
 
 mkdir -p $BUILD_DIR
-cmake -B $BUILD_DIR -GNinja -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake
+cmake -B $BUILD_DIR -GNinja -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain.cmake
 cmake --build $BUILD_DIR
 
 echo "--- Build Finished: $BUILD_DIR/MugPlugin.ofx ---"

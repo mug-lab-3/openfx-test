@@ -47,7 +47,7 @@ ENV BLEND2D_DIR=/opt/3rdparty/blend2d
 ENV ASMJIT_DIR=/opt/3rdparty/asmjit
 
 # Entrypoint setup
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # Workspace setup
