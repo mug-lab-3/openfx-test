@@ -363,6 +363,7 @@ class MugPlugin : public OFX::ImageEffect {
     OFX::Clip* dst_clip_;
     OFX::Clip* src_clip_;
     BLImage _cachedImg;
+    BLRectI _lastDrawRect{0, 0, 0, 0};
 
    public:
     explicit MugPlugin(OfxImageEffectHandle handle) : OFX::ImageEffect(handle) {
@@ -391,11 +392,7 @@ class MugPlugin : public OFX::ImageEffect {
                 createInfo.flags = BL_CONTEXT_CREATE_NO_FLAGS;
                 createInfo.thread_count = 1; // Single thread to avoid oversubscription with OFX
                 BLContext ctx(_cachedImg, createInfo);
-                ctx.set_comp_op(BL_COMP_OP_SRC_COPY);
-                ctx.fill_all(BLRgba32(0x00000000));
-                ctx.set_comp_op(BL_COMP_OP_SRC_OVER);
-
-                // 2. Draw Vector Graphics
+                // 2. Draw Vector Graphics Setup
                 double ncx, ncy, nw, nh;
                 fetchDouble2DParam("rectCenter")->getValueAtTime(args.time, ncx, ncy);
                 nw = fetchDoubleParam("rectWidth")->getValueAtTime(args.time);
@@ -403,6 +400,24 @@ class MugPlugin : public OFX::ImageEffect {
                 double cx = ncx * width, cy = (1.0 - ncy) * height;
                 double w = nw * width, h = nh * height;
 
+                // 3. ROI Calculation (Map Blend2D to OFX)
+                double padding = 20.0;
+                int roi_x1 = static_cast<int>(std::floor(cx - (w * 0.5) - padding));
+                int roi_y1 = static_cast<int>(std::floor(cy - (h * 0.5) - padding));
+                int roi_x2 = static_cast<int>(std::ceil(cx + (w * 0.5) + padding));
+                int roi_y2 = static_cast<int>(std::ceil(cy + (h * 0.5) + padding));
+
+                // 4. Selective Clear (Dirty Rects): Clear both the last and current areas
+                ctx.set_comp_op(BL_COMP_OP_SRC_COPY);
+                if (_lastDrawRect.w > 0 && _lastDrawRect.h > 0) {
+                    ctx.fill_rect(_lastDrawRect, BLRgba32(0x00000000));
+                }
+                BLRectI currentRect(roi_x1, roi_y1, roi_x2 - roi_x1, roi_y2 - roi_y1);
+                ctx.fill_rect(currentRect, BLRgba32(0x00000000));
+                ctx.set_comp_op(BL_COMP_OP_SRC_OVER);
+                _lastDrawRect = currentRect;
+
+                // 5. Draw Vector Graphics (Only within cleared ROI)
                 ctx.set_fill_style(BLRgba32(0x800000FF));
                 ctx.fill_round_rect(BLRoundRect(cx - (w * 0.5), cy - (h * 0.5), w, h, 20.0));
                 ctx.set_fill_style(BLRgba32(0xFFFFFF00));
@@ -424,20 +439,13 @@ class MugPlugin : public OFX::ImageEffect {
                 }
                 ctx.end();
 
-                // 3. ROI Calculation (Map Blend2D to OFX)
-                double padding = 20.0;
-                int roi_x1 = static_cast<int>(std::floor(cx - (w * 0.5) - padding));
-                int roi_y1 = static_cast<int>(std::floor(cy - (h * 0.5) - padding));
-                int roi_x2 = static_cast<int>(std::ceil(cx + (w * 0.5) + padding));
-                int roi_y2 = static_cast<int>(std::ceil(cy + (h * 0.5) + padding));
-
                 OfxRectI drawWindow;
                 drawWindow.x1 = bounds.x1 + roi_x1;
                 drawWindow.x2 = bounds.x1 + roi_x2;
                 drawWindow.y1 = bounds.y2 - roi_y2;
                 drawWindow.y2 = bounds.y2 - roi_y1;
 
-                // 4. Unified Processing Pass
+                // 6. Unified Processing Pass
                 if (dstBitDepth == OFX::eBitDepthUByte) {
                     MugUnifiedProcessor<uint8_t, 4, 255> processor(*this, src.get(), _cachedImg, bounds, drawWindow);
                     processor.setDstImg(dst.get());
