@@ -57,7 +57,7 @@ openfx-test/
 ├── openfx-OFX_Release_1.5.1/
 │   ├── include/
 │   └── Support/
-├── main.cpp
+├── main.cc
 └── ...
 ```
 
@@ -89,7 +89,7 @@ chmod +x build.sh
 
 ## プロジェクト構成
 
-- `main.cpp`: プラグインのメインソースコード
+- `main.cc`: プラグインのメインソースコード
 - `CMakeLists.txt`: ビルド設定
 - `openfx-OFX_Release_1.5.1/`: OpenFX SDK (Support Library を含む)
 - `build.sh`: ビルド実行用ラッパースクリプト

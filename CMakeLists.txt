@@ -32,7 +32,7 @@ set(OFX_SUPPORT_SOURCES
 
 # Define the Plugin Target
 add_library(MugPlugin SHARED
-    main.cpp
+    main.cc
     ${OFX_SUPPORT_SOURCES}
 )
 
