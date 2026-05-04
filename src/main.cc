@@ -345,6 +345,7 @@ class MugPlugin : public OFX::ImageEffect {
    protected:
     OFX::Clip* dst_clip_;
     OFX::Clip* src_clip_;
+    BLImage _cachedImg;
 
    public:
     explicit MugPlugin(OfxImageEffectHandle handle) : OFX::ImageEffect(handle) {
@@ -403,8 +404,16 @@ class MugPlugin : public OFX::ImageEffect {
             int height = bounds.y2 - bounds.y1;
 
             if (width > 0 && height > 0) {
-                BLImage img(width, height, BL_FORMAT_PRGB32);
-                BLContext ctx(img);
+                // Reuse or resize cached image
+                if (_cachedImg.width() != width || _cachedImg.height() != height) {
+                    _cachedImg.create(width, height, BL_FORMAT_PRGB32);
+                }
+
+                // Initialize context with multi-threading enabled
+                BLContextCreateInfo createInfo;
+                createInfo.flags = BL_CONTEXT_CREATE_NO_FLAGS;
+                createInfo.thread_count = 0; // Auto-detect based on CPU cores
+                BLContext ctx(_cachedImg, createInfo);
 
                 ctx.set_comp_op(BL_COMP_OP_SRC_COPY);
                 ctx.fill_all(BLRgba32(0x00000000));
@@ -444,21 +453,43 @@ class MugPlugin : public OFX::ImageEffect {
                 }
                 ctx.end();
 
-                if (dstBitDepth == OFX::eBitDepthUByte) {
-                    Blend2DCompositor<uint8_t, 255> compositor(*this, img, bounds, height);
-                    compositor.setDstImg(dst.get());
-                    compositor.setRenderWindow(args.renderWindow);
-                    compositor.process();
-                } else if (dstBitDepth == OFX::eBitDepthUShort) {
-                    Blend2DCompositor<uint16_t, 65535> compositor(*this, img, bounds, height);
-                    compositor.setDstImg(dst.get());
-                    compositor.setRenderWindow(args.renderWindow);
-                    compositor.process();
-                } else if (dstBitDepth == OFX::eBitDepthFloat) {
-                    Blend2DCompositor<float, 1> compositor(*this, img, bounds, height);
-                    compositor.setDstImg(dst.get());
-                    compositor.setRenderWindow(args.renderWindow);
-                    compositor.process();
+                // --- ROI Optimization: Only composite the area we actually drew on ---
+                // Calculate bounding box in pixel coordinates (Blend2D space)
+                double padding = 20.0; // for stroke and text
+                int roi_x1 = static_cast<int>(std::floor(cx - (w * 0.5) - padding));
+                int roi_y1 = static_cast<int>(std::floor(cy - (h * 0.5) - padding));
+                int roi_x2 = static_cast<int>(std::ceil(cx + (w * 0.5) + padding));
+                int roi_y2 = static_cast<int>(std::ceil(cy + (h * 0.5) + padding));
+
+                // Map Blend2D ROI to OFX Coordinates (flipped Y)
+                OfxRectI drawWindow;
+                drawWindow.x1 = std::max(args.renderWindow.x1, bounds.x1 + roi_x1);
+                drawWindow.x2 = std::min(args.renderWindow.x2, bounds.x1 + roi_x2);
+                // In OFX, y1 is bottom. In Blend2D, roi_y1 is top.
+                // Blend2D Top (roi_y1) -> OFX Top (bounds.y2 - roi_y1)
+                // Blend2D Bottom (roi_y2) -> OFX Bottom (bounds.y2 - roi_y2)
+                int ofx_y_top = bounds.y2 - roi_y1;
+                int ofx_y_bottom = bounds.y2 - roi_y2;
+                drawWindow.y1 = std::max(args.renderWindow.y1, ofx_y_bottom);
+                drawWindow.y2 = std::min(args.renderWindow.y2, ofx_y_top);
+
+                if (drawWindow.x1 < drawWindow.x2 && drawWindow.y1 < drawWindow.y2) {
+                    if (dstBitDepth == OFX::eBitDepthUByte) {
+                        Blend2DCompositor<uint8_t, 255> compositor(*this, _cachedImg, bounds, height);
+                        compositor.setDstImg(dst.get());
+                        compositor.setRenderWindow(drawWindow);
+                        compositor.process();
+                    } else if (dstBitDepth == OFX::eBitDepthUShort) {
+                        Blend2DCompositor<uint16_t, 65535> compositor(*this, _cachedImg, bounds, height);
+                        compositor.setDstImg(dst.get());
+                        compositor.setRenderWindow(drawWindow);
+                        compositor.process();
+                    } else if (dstBitDepth == OFX::eBitDepthFloat) {
+                        Blend2DCompositor<float, 1> compositor(*this, _cachedImg, bounds, height);
+                        compositor.setDstImg(dst.get());
+                        compositor.setRenderWindow(drawWindow);
+                        compositor.process();
+                    }
                 }
             }
         }
