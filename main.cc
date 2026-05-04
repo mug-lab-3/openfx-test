@@ -14,6 +14,7 @@
 #endif
 
 #include <concepts>
+#include <cstdint>
 #include <memory>
 #include <span>
 
@@ -32,10 +33,10 @@ concept OfxPixel = std::integral<T> || std::floating_point<T>;
 template <OfxPixel PIX, int nComponents, int max>
 class MugGreenScaler : public OFX::ImageProcessor {
    protected:
-    OFX::Image* src_img_;
+    OFX::Image* src_img_{nullptr};
 
    public:
-    explicit MugGreenScaler(OFX::ImageEffect& instance) : OFX::ImageProcessor(instance), src_img_(nullptr) {
+    explicit MugGreenScaler(OFX::ImageEffect& instance) : OFX::ImageProcessor(instance) {
     }
 
     void setSrcImg(OFX::Image* v) {
@@ -46,7 +47,9 @@ class MugGreenScaler : public OFX::ImageProcessor {
         const int width = procWindow.x2 - procWindow.x1;
 
         for (int y = procWindow.y1; y < procWindow.y2; y++) {
-            if (_effect.abort()) break;
+            if (_effect.abort()) {
+                break;
+            }
 
             // Use std::span for safer memory access
             std::span<PIX> dst_row(static_cast<PIX*>(_dstImg->getPixelAddress(procWindow.x1, y)), width * nComponents);
@@ -78,7 +81,7 @@ class MugInteract : public OFX::OverlayInteract {
     OFX::DoubleParam* rect_height_;
     OFX::Clip* src_clip_;
 
-    enum DragMode {
+    enum DragMode : std::uint8_t {
         eModeNone,
         eModeCenter,
         eModeTopLeft,
@@ -86,11 +89,11 @@ class MugInteract : public OFX::OverlayInteract {
         eModeBottomLeft,
         eModeBottomRight
     };
-    DragMode drag_mode_;
+    DragMode drag_mode_{eModeNone};
 
    public:
     MugInteract(OfxInteractHandle handle, OFX::ImageEffect* effect)
-        : OFX::OverlayInteract(handle), drag_mode_(eModeNone) {
+        : OFX::OverlayInteract(handle) {
         rect_center_ = effect->fetchDouble2DParam("rectCenter");
         rect_width_ = effect->fetchDoubleParam("rectWidth");
         rect_height_ = effect->fetchDoubleParam("rectHeight");
@@ -105,7 +108,7 @@ class MugInteract : public OFX::OverlayInteract {
         OfxRectD rod_;
     };
 
-    PixelRect getPixelRect(double time) {
+    auto getPixelRect(double time) -> PixelRect {
         PixelRect pr;
         pr.rod_ = src_clip_->getRegionOfDefinition(time);
         double rw = pr.rod_.x2 - pr.rod_.x1;
@@ -117,14 +120,14 @@ class MugInteract : public OFX::OverlayInteract {
         rect_center_->getValueAtTime(time, ncx, ncy);
         nw = rect_width_->getValueAtTime(time);
         nh = rect_height_->getValueAtTime(time);
-        pr.cx_ = pr.rod_.x1 + ncx * rw;
-        pr.cy_ = pr.rod_.y1 + ncy * rh;
+        pr.cx_ = pr.rod_.x1 + (ncx * rw);
+        pr.cy_ = pr.rod_.y1 + (ncy * rh);
         pr.w_ = nw * rw;
         pr.h_ = nh * rh;
         return pr;
     }
 
-    bool draw(const OFX::DrawArgs& args) override {
+    auto draw(const OFX::DrawArgs& args) -> bool override {
         PixelRect pr = getPixelRect(args.time);
         double hw = pr.w_ * 0.5;
         double hh = pr.h_ * 0.5;
@@ -134,7 +137,7 @@ class MugInteract : public OFX::OverlayInteract {
         double y2 = pr.cy_ + hh;
 
         glPushMatrix();
-        glColor3f(1.0f, 1.0f, 1.0f);
+        glColor3f(1.0F, 1.0F, 1.0F);
         glBegin(GL_LINE_LOOP);
         glVertex2d(x1, y1);
         glVertex2d(x1, y2);
@@ -144,17 +147,18 @@ class MugInteract : public OFX::OverlayInteract {
 
         double handleSize = 8.0 * args.pixelScale.x;
         auto drawHandle = [&](double x, double y, bool active) {
-            if (active)
-                glColor3f(1.0f, 1.0f, 0.0f);
-            else
-                glColor3f(1.0f, 1.0f, 1.0f);
+            if (active) {
+                glColor3f(1.0F, 1.0F, 0.0F);
+            } else {
+                glColor3f(1.0F, 1.0F, 1.0F);
+            }
             glBegin(GL_QUADS);
             glVertex2d(x - handleSize, y - handleSize);
             glVertex2d(x - handleSize, y + handleSize);
             glVertex2d(x + handleSize, y + handleSize);
             glVertex2d(x + handleSize, y - handleSize);
             glEnd();
-            glColor3f(0.0f, 0.0f, 0.0f);
+            glColor3f(0.0F, 0.0F, 0.0F);
             glBegin(GL_LINE_LOOP);
             glVertex2d(x - handleSize, y - handleSize);
             glVertex2d(x - handleSize, y + handleSize);
@@ -168,7 +172,7 @@ class MugInteract : public OFX::OverlayInteract {
         drawHandle(x2, y2, drag_mode_ == eModeTopRight);
         drawHandle(x2, y1, drag_mode_ == eModeBottomRight);
 
-        glColor3f(1.0f, 1.0f, 1.0f);
+        glColor3f(1.0F, 1.0F, 1.0F);
         double crossSize = 10.0 * args.pixelScale.x;
         glBegin(GL_LINES);
         glVertex2d(pr.cx_ - crossSize, pr.cy_);
@@ -180,7 +184,7 @@ class MugInteract : public OFX::OverlayInteract {
         return true;
     }
 
-    bool penDown(const OFX::PenArgs& args) override {
+    auto penDown(const OFX::PenArgs& args) -> bool override {
         PixelRect pr = getPixelRect(args.time);
         double hw = pr.w_ * 0.5;
         double hh = pr.h_ * 0.5;
@@ -192,18 +196,19 @@ class MugInteract : public OFX::OverlayInteract {
         double py = args.penPosition.y;
         double tol = 10.0 * args.pixelScale.x;
 
-        if (abs(px - x1) < tol && abs(py - y1) < tol)
+        if (abs(px - x1) < tol && abs(py - y1) < tol) {
             drag_mode_ = eModeBottomLeft;
-        else if (abs(px - x1) < tol && abs(py - y2) < tol)
+        } else if (abs(px - x1) < tol && abs(py - y2) < tol) {
             drag_mode_ = eModeTopLeft;
-        else if (abs(px - x2) < tol && abs(py - y2) < tol)
+        } else if (abs(px - x2) < tol && abs(py - y2) < tol) {
             drag_mode_ = eModeTopRight;
-        else if (abs(px - x2) < tol && abs(py - y1) < tol)
+        } else if (abs(px - x2) < tol && abs(py - y1) < tol) {
             drag_mode_ = eModeBottomRight;
-        else if (px >= x1 && px <= x2 && py >= y1 && py <= y2)
+        } else if (px >= x1 && px <= x2 && py >= y1 && py <= y2) {
             drag_mode_ = eModeCenter;
-        else
+        } else {
             drag_mode_ = eModeNone;
+        }
 
         if (drag_mode_ != eModeNone) {
             _effect->redrawOverlays();
@@ -212,12 +217,16 @@ class MugInteract : public OFX::OverlayInteract {
         return false;
     }
 
-    bool penMotion(const OFX::PenArgs& args) override {
-        if (drag_mode_ == eModeNone) return false;
+    auto penMotion(const OFX::PenArgs& args) -> bool override {
+        if (drag_mode_ == eModeNone) {
+            return false;
+        }
         OfxRectD rod = src_clip_->getRegionOfDefinition(args.time);
         double rw = rod.x2 - rod.x1;
         double rh = rod.y2 - rod.y1;
-        if (rw <= 0 || rh <= 0) return false;
+        if (rw <= 0 || rh <= 0) {
+            return false;
+        }
         double ncx;
         double ncy;
         double nw;
@@ -231,10 +240,10 @@ class MugInteract : public OFX::OverlayInteract {
         if (drag_mode_ == eModeCenter) {
             rect_center_->setValue(npx, npy);
         } else {
-            double x1 = ncx - nw * 0.5;
-            double x2 = ncx + nw * 0.5;
-            double y1 = ncy - nh * 0.5;
-            double y2 = ncy + nh * 0.5;
+            double x1 = ncx - (nw * 0.5);
+            double x2 = ncx + (nw * 0.5);
+            double y1 = ncy - (nh * 0.5);
+            double y2 = ncy + (nh * 0.5);
             if (drag_mode_ == eModeBottomLeft) {
                 x1 = npx;
                 y1 = npy;
@@ -259,7 +268,7 @@ class MugInteract : public OFX::OverlayInteract {
         return true;
     }
 
-    bool penUp(const OFX::PenArgs& args) override {
+    auto penUp(const OFX::PenArgs& args) -> bool override {
         if (drag_mode_ != eModeNone) {
             drag_mode_ = eModeNone;
             _effect->redrawOverlays();
@@ -292,10 +301,14 @@ class MugPlugin : public OFX::ImageEffect {
         std::unique_ptr<OFX::Image> dst(dst_clip_->fetchImage(args.time));
         std::unique_ptr<OFX::Image> src(src_clip_->fetchImage(args.time));
 
-        if (dstComponents == OFX::ePixelComponentRGBA) {
+        if (dstComponents == OFX::ePixelComponentRGBA && src) {
+            constexpr int kMaxUByte = 255;
+            constexpr int kMaxUShort = 65535;
+            constexpr float kMaxFloat = 1.0F;
+
             switch (dstBitDepth) {
                 case OFX::eBitDepthUByte: {
-                    MugGreenScaler<unsigned char, 4, 255> processor(*this);
+                    MugGreenScaler<unsigned char, 4, kMaxUByte> processor(*this);
                     processor.setDstImg(dst.get());
                     processor.setSrcImg(src.get());
                     processor.setRenderWindow(args.renderWindow);
@@ -303,7 +316,7 @@ class MugPlugin : public OFX::ImageEffect {
                     break;
                 }
                 case OFX::eBitDepthUShort: {
-                    MugGreenScaler<unsigned short, 4, 65535> processor(*this);
+                    MugGreenScaler<uint16_t, 4, kMaxUShort> processor(*this);
                     processor.setDstImg(dst.get());
                     processor.setSrcImg(src.get());
                     processor.setRenderWindow(args.renderWindow);
@@ -311,7 +324,7 @@ class MugPlugin : public OFX::ImageEffect {
                     break;
                 }
                 case OFX::eBitDepthFloat: {
-                    MugGreenScaler<float, 4, 1> processor(*this);
+                    MugGreenScaler<float, 4, static_cast<int>(kMaxFloat)> processor(*this);
                     processor.setDstImg(dst.get());
                     processor.setSrcImg(src.get());
                     processor.setRenderWindow(args.renderWindow);
@@ -324,13 +337,11 @@ class MugPlugin : public OFX::ImageEffect {
         }
     }
 
-    bool isIdentity(const OFX::IsIdentityArguments& args, OFX::Clip*& identityClip,
-                    double& identityTime) override {
+    auto isIdentity(const OFX::IsIdentityArguments& args, OFX::Clip*& identityClip, double& identityTime)
+        -> bool override {
         return false;
     }
 };
-
-using namespace OFX;
 
 class MugPluginFactory : public OFX::PluginFactoryHelper<MugPluginFactory> {
    public:
@@ -341,48 +352,47 @@ class MugPluginFactory : public OFX::PluginFactoryHelper<MugPluginFactory> {
     void describe(OFX::ImageEffectDescriptor& desc) override {
         desc.setLabels("Mug Min Plugin 8", "Mug Min Plugin 8", "Mug Min Plugin 8");
         desc.setPluginGrouping("MugLab");
-        desc.addSupportedContext(eContextFilter);
-        desc.addSupportedContext(eContextGeneral);
-        desc.addSupportedBitDepth(eBitDepthFloat);
-        desc.addSupportedBitDepth(eBitDepthUByte);
-        desc.addSupportedBitDepth(eBitDepthUShort);
+        desc.addSupportedContext(OFX::eContextFilter);
+        desc.addSupportedContext(OFX::eContextGeneral);
+        desc.addSupportedBitDepth(OFX::eBitDepthFloat);
+        desc.addSupportedBitDepth(OFX::eBitDepthUByte);
+        desc.addSupportedBitDepth(OFX::eBitDepthUShort);
         desc.setOverlayInteractDescriptor(new MugOverlayDescriptor());
     }
 
     void describeInContext(OFX::ImageEffectDescriptor& desc, OFX::ContextEnum context) override {
-        desc.defineClip(kOfxImageEffectSimpleSourceClipName)->addSupportedComponent(ePixelComponentRGBA);
-        desc.defineClip(kOfxImageEffectOutputClipName)->addSupportedComponent(ePixelComponentRGBA);
+        desc.defineClip(kOfxImageEffectSimpleSourceClipName)->addSupportedComponent(OFX::ePixelComponentRGBA);
+        desc.defineClip(kOfxImageEffectOutputClipName)->addSupportedComponent(OFX::ePixelComponentRGBA);
 
-        PageParamDescriptor* page = desc.definePageParam("Controls");
-        Double2DParamDescriptor* centerParam = desc.defineDouble2DParam("rectCenter");
+        OFX::PageParamDescriptor* page = desc.definePageParam("Controls");
+        OFX::Double2DParamDescriptor* centerParam = desc.defineDouble2DParam("rectCenter");
         centerParam->setLabels("Center", "Center", "Center");
         centerParam->setDefault(0.5, 0.5);
         centerParam->setRange(0, 0, 1, 1);
         page->addChild(*centerParam);
 
-        DoubleParamDescriptor* widthParam = desc.defineDoubleParam("rectWidth");
+        OFX::DoubleParamDescriptor* widthParam = desc.defineDoubleParam("rectWidth");
         widthParam->setLabels("Width", "Width", "Width");
         widthParam->setDefault(0.5);
         widthParam->setRange(0, 1);
+        page->addChild(*centerParam);
         page->addChild(*widthParam);
 
-        DoubleParamDescriptor* heightParam = desc.defineDoubleParam("rectHeight");
+        OFX::DoubleParamDescriptor* heightParam = desc.defineDoubleParam("rectHeight");
         heightParam->setLabels("Height", "Height", "Height");
         heightParam->setDefault(0.5);
         heightParam->setRange(0, 1);
         page->addChild(*heightParam);
     }
 
-    OFX::ImageEffect* createInstance(OfxImageEffectHandle handle, OFX::ContextEnum context) override {
+    auto createInstance(OfxImageEffectHandle handle, OFX::ContextEnum context) -> OFX::ImageEffect* override {
         return new MugPlugin(handle);
     }
 };
 
-namespace OFX {
-namespace Plugin {
+namespace OFX::Plugin {
 void getPluginIDs(OFX::PluginFactoryArray& ids) {
     static MugPluginFactory p("com.muglab.minplugin8", 1, 0);
     ids.push_back(&p);
 }
-}  // namespace Plugin
-}  // namespace OFX
+}  // namespace OFX::Plugin

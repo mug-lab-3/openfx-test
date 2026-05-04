@@ -14,8 +14,6 @@ CheckOptions:
     value: ""
   - key: readability-identifier-naming.MemberSuffix
     value: "_"
-  - key: readability-identifier-naming.MemberCase
-    value: "lower_snake_case"
   - key: readability-magic-numbers.IgnoreAllFloatingPointValues
     value: "true"
   - key: modernize-use-override.IgnoreDestructors
