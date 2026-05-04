@@ -1,15 +1,13 @@
 #!/bin/bash
-# If build directory doesn't exist, configure the project
-if [ ! -d "build" ]; then
-    # Check if ninja is available
-    GENERATOR_ARGS=""
-    if command -v ninja >/dev/null 2>&1; then
-        GENERATOR_ARGS="-G Ninja"
-    fi
+# This is a legacy entry point. 
+# Building via Docker is now the recommended way.
 
-    cmake -B build $GENERATOR_ARGS \
-      -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake
+if [[ "$1" == "--local" ]]; then
+    echo "Running local build (requires local LLVM/MinGW/SDKs)..."
+    mkdir -p build
+    cmake -B build -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake
+    cmake --build build
+else
+    echo "Delegating to docker-build.sh..."
+    ./docker-build.sh
 fi
-
-# Execute build
-cmake --build build

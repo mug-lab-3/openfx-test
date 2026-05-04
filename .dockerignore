@@ -1,0 +1,7 @@
+build/
+.cache/
+.ccache/
+.git/
+3rdparty/
+openfx-*/
+*.ofx
