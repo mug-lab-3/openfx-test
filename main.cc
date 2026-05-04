@@ -1,4 +1,4 @@
-#include <math.h>
+#include <cmath>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -35,7 +35,7 @@ class MugGreenScaler : public OFX::ImageProcessor {
     OFX::Image* src_img_;
 
    public:
-    MugGreenScaler(OFX::ImageEffect& instance) : OFX::ImageProcessor(instance), src_img_(nullptr) {
+    explicit MugGreenScaler(OFX::ImageEffect& instance) : OFX::ImageProcessor(instance), src_img_(nullptr) {
     }
 
     void setSrcImg(OFX::Image* v) {
@@ -97,10 +97,19 @@ class MugInteract : public OFX::OverlayInteract {
         src_clip_ = effect->fetchClip(kOfxImageEffectSimpleSourceClipName);
     }
 
-    void getPixelRect(double time, double& cx, double& cy, double& w, double& h, OfxRectD& rod) {
-        rod = src_clip_->getRegionOfDefinition(time);
-        double rw = rod.x2 - rod.x1;
-        double rh = rod.y2 - rod.y1;
+    struct PixelRect {
+        double cx_;
+        double cy_;
+        double w_;
+        double h_;
+        OfxRectD rod_;
+    };
+
+    PixelRect getPixelRect(double time) {
+        PixelRect pr;
+        pr.rod_ = src_clip_->getRegionOfDefinition(time);
+        double rw = pr.rod_.x2 - pr.rod_.x1;
+        double rh = pr.rod_.y2 - pr.rod_.y1;
         double ncx;
         double ncy;
         double nw;
@@ -108,25 +117,21 @@ class MugInteract : public OFX::OverlayInteract {
         rect_center_->getValueAtTime(time, ncx, ncy);
         nw = rect_width_->getValueAtTime(time);
         nh = rect_height_->getValueAtTime(time);
-        cx = rod.x1 + ncx * rw;
-        cy = rod.y1 + ncy * rh;
-        w = nw * rw;
-        h = nh * rh;
+        pr.cx_ = pr.rod_.x1 + ncx * rw;
+        pr.cy_ = pr.rod_.y1 + ncy * rh;
+        pr.w_ = nw * rw;
+        pr.h_ = nh * rh;
+        return pr;
     }
 
-    virtual bool draw(const OFX::DrawArgs& args) override {
-        double cx;
-        double cy;
-        double w;
-        double h;
-        OfxRectD rod;
-        getPixelRect(args.time, cx, cy, w, h, rod);
-        double hw = w * 0.5;
-        double hh = h * 0.5;
-        double x1 = cx - hw;
-        double x2 = cx + hw;
-        double y1 = cy - hh;
-        double y2 = cy + hh;
+    bool draw(const OFX::DrawArgs& args) override {
+        PixelRect pr = getPixelRect(args.time);
+        double hw = pr.w_ * 0.5;
+        double hh = pr.h_ * 0.5;
+        double x1 = pr.cx_ - hw;
+        double x2 = pr.cx_ + hw;
+        double y1 = pr.cy_ - hh;
+        double y2 = pr.cy_ + hh;
 
         glPushMatrix();
         glColor3f(1.0f, 1.0f, 1.0f);
@@ -166,28 +171,23 @@ class MugInteract : public OFX::OverlayInteract {
         glColor3f(1.0f, 1.0f, 1.0f);
         double crossSize = 10.0 * args.pixelScale.x;
         glBegin(GL_LINES);
-        glVertex2d(cx - crossSize, cy);
-        glVertex2d(cx + crossSize, cy);
-        glVertex2d(cx, cy - crossSize);
-        glVertex2d(cx, cy + crossSize);
+        glVertex2d(pr.cx_ - crossSize, pr.cy_);
+        glVertex2d(pr.cx_ + crossSize, pr.cy_);
+        glVertex2d(pr.cx_, pr.cy_ - crossSize);
+        glVertex2d(pr.cx_, pr.cy_ + crossSize);
         glEnd();
         glPopMatrix();
         return true;
     }
 
-    virtual bool penDown(const OFX::PenArgs& args) override {
-        double cx;
-        double cy;
-        double w;
-        double h;
-        OfxRectD rod;
-        getPixelRect(args.time, cx, cy, w, h, rod);
-        double hw = w * 0.5;
-        double hh = h * 0.5;
-        double x1 = cx - hw;
-        double x2 = cx + hw;
-        double y1 = cy - hh;
-        double y2 = cy + hh;
+    bool penDown(const OFX::PenArgs& args) override {
+        PixelRect pr = getPixelRect(args.time);
+        double hw = pr.w_ * 0.5;
+        double hh = pr.h_ * 0.5;
+        double x1 = pr.cx_ - hw;
+        double x2 = pr.cx_ + hw;
+        double y1 = pr.cy_ - hh;
+        double y2 = pr.cy_ + hh;
         double px = args.penPosition.x;
         double py = args.penPosition.y;
         double tol = 10.0 * args.pixelScale.x;
@@ -212,7 +212,7 @@ class MugInteract : public OFX::OverlayInteract {
         return false;
     }
 
-    virtual bool penMotion(const OFX::PenArgs& args) override {
+    bool penMotion(const OFX::PenArgs& args) override {
         if (drag_mode_ == eModeNone) return false;
         OfxRectD rod = src_clip_->getRegionOfDefinition(args.time);
         double rw = rod.x2 - rod.x1;
@@ -259,7 +259,7 @@ class MugInteract : public OFX::OverlayInteract {
         return true;
     }
 
-    virtual bool penUp(const OFX::PenArgs& args) override {
+    bool penUp(const OFX::PenArgs& args) override {
         if (drag_mode_ != eModeNone) {
             drag_mode_ = eModeNone;
             _effect->redrawOverlays();
@@ -280,12 +280,12 @@ class MugPlugin : public OFX::ImageEffect {
     OFX::Clip* src_clip_;
 
    public:
-    MugPlugin(OfxImageEffectHandle handle) : OFX::ImageEffect(handle) {
+    explicit MugPlugin(OfxImageEffectHandle handle) : OFX::ImageEffect(handle) {
         dst_clip_ = fetchClip(kOfxImageEffectOutputClipName);
         src_clip_ = fetchClip(kOfxImageEffectSimpleSourceClipName);
     }
 
-    virtual void render(const OFX::RenderArguments& args) override {
+    void render(const OFX::RenderArguments& args) override {
         OFX::BitDepthEnum dstBitDepth = dst_clip_->getPixelDepth();
         OFX::PixelComponentEnum dstComponents = dst_clip_->getPixelComponents();
 
@@ -324,8 +324,8 @@ class MugPlugin : public OFX::ImageEffect {
         }
     }
 
-    virtual bool isIdentity(const OFX::IsIdentityArguments& args, OFX::Clip*& identityClip,
-                            double& identityTime) override {
+    bool isIdentity(const OFX::IsIdentityArguments& args, OFX::Clip*& identityClip,
+                    double& identityTime) override {
         return false;
     }
 };
@@ -338,7 +338,7 @@ class MugPluginFactory : public OFX::PluginFactoryHelper<MugPluginFactory> {
         : OFX::PluginFactoryHelper<MugPluginFactory>(id, verMaj, verMin) {
     }
 
-    virtual void describe(OFX::ImageEffectDescriptor& desc) override {
+    void describe(OFX::ImageEffectDescriptor& desc) override {
         desc.setLabels("Mug Min Plugin 8", "Mug Min Plugin 8", "Mug Min Plugin 8");
         desc.setPluginGrouping("MugLab");
         desc.addSupportedContext(eContextFilter);
@@ -349,7 +349,7 @@ class MugPluginFactory : public OFX::PluginFactoryHelper<MugPluginFactory> {
         desc.setOverlayInteractDescriptor(new MugOverlayDescriptor());
     }
 
-    virtual void describeInContext(OFX::ImageEffectDescriptor& desc, OFX::ContextEnum context) override {
+    void describeInContext(OFX::ImageEffectDescriptor& desc, OFX::ContextEnum context) override {
         desc.defineClip(kOfxImageEffectSimpleSourceClipName)->addSupportedComponent(ePixelComponentRGBA);
         desc.defineClip(kOfxImageEffectOutputClipName)->addSupportedComponent(ePixelComponentRGBA);
 
@@ -373,7 +373,7 @@ class MugPluginFactory : public OFX::PluginFactoryHelper<MugPluginFactory> {
         page->addChild(*heightParam);
     }
 
-    virtual OFX::ImageEffect* createInstance(OfxImageEffectHandle handle, OFX::ContextEnum context) override {
+    OFX::ImageEffect* createInstance(OfxImageEffectHandle handle, OFX::ContextEnum context) override {
         return new MugPlugin(handle);
     }
 };

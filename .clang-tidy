@@ -4,6 +4,7 @@ Checks: >
   modernize-*,
   performance-*,
   readability-*,
+  -readability-identifier-length,
   google-*
 
 WarningsAsErrors: ""
@@ -14,7 +15,7 @@ CheckOptions:
   - key: readability-identifier-naming.MemberSuffix
     value: "_"
   - key: readability-identifier-naming.MemberCase
-    value: "snake_case"
+    value: "lower_snake_case"
   - key: readability-magic-numbers.IgnoreAllFloatingPointValues
     value: "true"
   - key: modernize-use-override.IgnoreDestructors
