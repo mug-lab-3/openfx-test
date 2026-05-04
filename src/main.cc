@@ -338,9 +338,9 @@ class MugPlugin : public OFX::ImageEffect {
         }
 
         // ==============================================================================
-        // 2. Vector Processing (Blend2D) - Hybrid Sample
+        // 2. Vector Processing (Blend2D) - Hybrid Sample (Fixed Alpha & Robust)
         // ==============================================================================
-        if (dstBitDepth == OFX::eBitDepthUByte || dstBitDepth == OFX::eBitDepthFloat) {
+        if (dstBitDepth == OFX::eBitDepthUByte || dstBitDepth == OFX::eBitDepthUShort || dstBitDepth == OFX::eBitDepthFloat) {
             OfxRectI bounds = dst->getBounds();
             int width = bounds.x2 - bounds.x1;
             int height = bounds.y2 - bounds.y1;
@@ -349,85 +349,99 @@ class MugPlugin : public OFX::ImageEffect {
                 BLImage img(width, height, BL_FORMAT_PRGB32);
                 BLContext ctx(img);
 
-                // Clear temporary buffer (transparent)
                 ctx.set_comp_op(BL_COMP_OP_SRC_COPY);
                 ctx.fill_all(BLRgba32(0x00000000));
                 ctx.set_comp_op(BL_COMP_OP_SRC_OVER);
 
-                // --- Fetch Parameters ---
                 double ncx, ncy, nw, nh;
                 fetchDouble2DParam("rectCenter")->getValueAtTime(args.time, ncx, ncy);
                 nw = fetchDoubleParam("rectWidth")->getValueAtTime(args.time);
                 nh = fetchDoubleParam("rectHeight")->getValueAtTime(args.time);
 
                 double cx = ncx * width;
-                double cy = (1.0 - ncy) * height;
+                double cy = (1.0 - ncy) * height; 
                 double w = nw * width;
                 double h = nh * height;
 
-                // --- Draw Shapes ---
                 ctx.set_fill_style(BLRgba32(0x800000FF));
                 ctx.fill_round_rect(BLRoundRect(cx - (w * 0.5), cy - (h * 0.5), w, h, 20.0));
-
                 ctx.set_fill_style(BLRgba32(0xFFFFFF00));
                 ctx.fill_circle(cx, cy, w * 0.2);
-
                 ctx.set_stroke_style(BLRgba32(0xFFFFFFFF));
                 ctx.set_stroke_width(2.0);
                 ctx.stroke_circle(cx, cy, w * 0.2);
 
-                // --- Draw Text ---
-                BLFontFace face;
-                if (face.create_from_file("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf") ==
-                        BL_SUCCESS ||
-                    face.create_from_file("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf") == BL_SUCCESS ||
-                    face.create_from_file("/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf") == BL_SUCCESS) {
-                    BLFont font;
-                    font.create_from_face(face, 24.0f);
+                static BLFontFace face;
+                static bool fontLoaded = false;
+                if (!fontLoaded) {
+                    if (face.create_from_file("C:/Windows/Fonts/arial.ttf") == BL_SUCCESS ||
+                        face.create_from_file("C:/Windows/Fonts/msgothic.ttc") == BL_SUCCESS ||
+                        face.create_from_file("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf") == BL_SUCCESS) {
+                        fontLoaded = true;
+                    }
+                }
+                if (fontLoaded) {
+                    BLFont font; font.create_from_face(face, 24.0f);
                     ctx.set_fill_style(BLRgba32(0xFFFFFFFF));
                     ctx.fill_utf8_text(BLPoint(cx - (w * 0.4), cy + (h * 0.4)), font, "Blend2D Hybrid Vector Text");
                 }
                 ctx.end();
 
-                // --- Composite back to Destination ---
                 BLImageData img_data;
                 img.get_data(&img_data);
 
                 for (int y = 0; y < height; y++) {
-                    uint32_t* src_line = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(img_data.pixel_data) +
-                                                                     (y * img_data.stride));
-
-                    // Flip Y for Destination: OpenFX y=0 is Bottom, Blend2D y=0 is Top.
+                    uint32_t* src_line = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(img_data.pixel_data) + (y * img_data.stride));
                     int dst_y = (height - 1) - y;
 
                     if (dstBitDepth == OFX::eBitDepthUByte) {
-                        uint8_t* dst_line =
-                            reinterpret_cast<uint8_t*>(dst->getPixelAddress(bounds.x1, bounds.y1 + dst_y));
+                        uint8_t* dst_line = reinterpret_cast<uint8_t*>(dst->getPixelAddress(bounds.x1, bounds.y1 + dst_y));
                         for (int x = 0; x < width; x++) {
-                            uint32_t pixel = src_line[x];
-                            uint8_t a = static_cast<uint8_t>((pixel >> 24) & 0xFF);
-                            if (a > 0) {
-                                // Simple Alpha Blend (8-bit)
-                                for (int c = 0; c < 4; c++) {
-                                    uint8_t s = static_cast<uint8_t>((pixel >> (c * 8)) & 0xFF);
-                                    uint8_t d = dst_line[x * 4 + c];
-                                    dst_line[x * 4 + c] = static_cast<uint8_t>((s * 255 + d * (255 - a)) / 255);
-                                }
+                            uint32_t p = src_line[x];
+                            uint32_t sa = (p >> 24) & 0xFF;
+                            if (sa == 0) continue;
+                            uint32_t sr = (p >> 16) & 0xFF; uint32_t sg = (p >> 8) & 0xFF; uint32_t sb = p & 0xFF;
+                            if (sa == 255) {
+                                dst_line[x*4+0] = (uint8_t)sr; dst_line[x*4+1] = (uint8_t)sg; dst_line[x*4+2] = (uint8_t)sb; dst_line[x*4+3] = 255;
+                            } else {
+                                // PRGB Blending: Dst = Src + Dst * (1 - sa)
+                                uint32_t inv_sa = 255 - sa;
+                                dst_line[x*4+0] = (uint8_t)(sr + (dst_line[x*4+0] * inv_sa + 127) / 255);
+                                dst_line[x*4+1] = (uint8_t)(sg + (dst_line[x*4+1] * inv_sa + 127) / 255);
+                                dst_line[x*4+2] = (uint8_t)(sb + (dst_line[x*4+2] * inv_sa + 127) / 255);
+                                dst_line[x*4+3] = (uint8_t)(sa + (dst_line[x*4+3] * inv_sa + 127) / 255);
+                            }
+                        }
+                    } else if (dstBitDepth == OFX::eBitDepthUShort) {
+                        uint16_t* dst_line = reinterpret_cast<uint16_t*>(dst->getPixelAddress(bounds.x1, bounds.y1 + dst_y));
+                        for (int x = 0; x < width; x++) {
+                            uint32_t p = src_line[x];
+                            uint32_t sa = (p >> 24) & 0xFF;
+                            if (sa == 0) continue;
+                            uint32_t sa16 = sa * 257;
+                            uint32_t sr = ((p >> 16) & 0xFF) * 257; uint32_t sg = ((p >> 8) & 0xFF) * 257; uint32_t sb = (p & 0xFF) * 257;
+                            if (sa == 255) {
+                                dst_line[x*4+0] = (uint16_t)sr; dst_line[x*4+1] = (uint16_t)sg; dst_line[x*4+2] = (uint16_t)sb; dst_line[x*4+3] = 65535;
+                            } else {
+                                uint32_t inv_sa16 = 65535 - sa16;
+                                dst_line[x*4+0] = (uint16_t)(sr + (dst_line[x*4+0] * inv_sa16 + 32767) / 65535);
+                                dst_line[x*4+1] = (uint16_t)(sg + (dst_line[x*4+1] * inv_sa16 + 32767) / 65535);
+                                dst_line[x*4+2] = (uint16_t)(sb + (dst_line[x*4+2] * inv_sa16 + 32767) / 65535);
+                                dst_line[x*4+3] = (uint16_t)(sa16 + (dst_line[x*4+3] * inv_sa16 + 32767) / 65535);
                             }
                         }
                     } else if (dstBitDepth == OFX::eBitDepthFloat) {
                         float* dst_line = reinterpret_cast<float*>(dst->getPixelAddress(bounds.x1, bounds.y1 + dst_y));
                         for (int x = 0; x < width; x++) {
-                            uint32_t pixel = src_line[x];
-                            float a = static_cast<float>((pixel >> 24) & 0xFF) / 255.0f;
-                            if (a > 0.0f) {
-                                // Simple Alpha Blend (Float)
-                                for (int c = 0; c < 4; c++) {
-                                    float s = static_cast<float>((pixel >> (c * 8)) & 0xFF) / 255.0f;
-                                    float d = dst_line[x * 4 + c];
-                                    dst_line[x * 4 + c] = s + d * (1.0f - a);
-                                }
-                            }
+                            uint32_t p = src_line[x];
+                            float sa = ((p >> 24) & 0xFF) / 255.0f;
+                            if (sa <= 0.0f) continue;
+                            float sr = ((p >> 16) & 0xFF) / 255.0f; float sg = ((p >> 8) & 0xFF) / 255.0f; float sb = (p & 0xFF) / 255.0f;
+                            float inv_sa = 1.0f - sa;
+                            dst_line[x*4+0] = sr + dst_line[x*4+0] * inv_sa;
+                            dst_line[x*4+1] = sg + dst_line[x*4+1] * inv_sa;
+                            dst_line[x*4+2] = sb + dst_line[x*4+2] * inv_sa;
+                            dst_line[x*4+3] = sa + dst_line[x*4+3] * inv_sa;
                         }
                     }
                 }
