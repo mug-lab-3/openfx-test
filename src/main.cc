@@ -25,6 +25,63 @@
 #include "ofxsInteract.h"
 #include "ofxsProcessing.h"
 
+// --- Blend2D to OpenFX Bridge: Parallel Compositing ---
+template <typename T, int maxVal>
+class Blend2DCompositor : public OFX::ImageProcessor {
+    BLImage& _srcImg;
+    OfxRectI _bounds;
+    int _height;
+public:
+    Blend2DCompositor(OFX::ImageEffect& effect, BLImage& src, OfxRectI bounds, int h) 
+        : OFX::ImageProcessor(effect), _srcImg(src), _bounds(bounds), _height(h) {}
+
+    void multiThreadProcessImages(OfxRectI window) override {
+        BLImageData data;
+        _srcImg.get_data(&data);
+        int win_w = window.x2 - window.x1;
+        
+        for (int y = window.y1; y < window.y2; y++) {
+            int bl_y = (_height - 1) - (y - _bounds.y1);
+            if (bl_y < 0 || bl_y >= _height) continue;
+
+            uint32_t* src_line = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(data.pixel_data) + (bl_y * data.stride));
+            T* d = reinterpret_cast<T*>(_dstImg->getPixelAddress(window.x1, y));
+
+            for (int x = 0; x < win_w; x++) {
+                uint32_t p = src_line[x + (window.x1 - _bounds.x1)];
+                uint32_t sa_8 = (p >> 24) & 0xFF;
+                if (sa_8 == 0) { d += 4; continue; }
+
+                if constexpr (std::is_same_v<T, float>) {
+                    float sa = sa_8 / 255.0f;
+                    float inv_sa = 1.0f - sa;
+                    d[0] = (((p >> 16) & 0xFF) / 255.0f) + (d[0] * inv_sa);
+                    d[1] = (((p >> 8) & 0xFF) / 255.0f) + (d[1] * inv_sa);
+                    d[2] = ((p & 0xFF) / 255.0f) + (d[2] * inv_sa);
+                    d[3] = sa + (d[3] * inv_sa);
+                } else {
+                    uint32_t sa = (maxVal == 255) ? sa_8 : (sa_8 * 257);
+                    uint32_t inv_sa = maxVal - sa;
+                    uint32_t sr = ((p >> 16) & 0xFF);
+                    uint32_t sg = ((p >> 8) & 0xFF);
+                    uint32_t sb = (p & 0xFF);
+                    if (maxVal != 255) { sr *= 257; sg *= 257; sb *= 257; }
+
+                    if (sa_8 == 255) {
+                        d[0] = (T)sr; d[1] = (T)sg; d[2] = (T)sb; d[3] = (T)maxVal;
+                    } else {
+                        d[0] = (T)(sr + (d[0] * inv_sa + (maxVal / 2)) / maxVal);
+                        d[1] = (T)(sg + (d[1] * inv_sa + (maxVal / 2)) / maxVal);
+                        d[2] = (T)(sb + (d[2] * inv_sa + (maxVal / 2)) / maxVal);
+                        d[3] = (T)(sa + (d[3] * inv_sa + (maxVal / 2)) / maxVal);
+                    }
+                }
+                d += 4;
+            }
+        }
+    }
+};
+
 // ==============================================================================
 // Image Processor: Multi-threaded pixel processing
 // ==============================================================================
@@ -32,7 +89,7 @@
 template <typename T>
 concept OfxPixel = std::integral<T> || std::floating_point<T>;
 
-template <OfxPixel PIX, int nComponents, int max>
+template <OfxPixel PIX, int nComponents, int maxVal>
 class MugGreenScaler : public OFX::ImageProcessor {
    protected:
     OFX::Image* src_img_{nullptr};
@@ -338,7 +395,7 @@ class MugPlugin : public OFX::ImageEffect {
         }
 
         // ==============================================================================
-        // 2. Vector Processing (Blend2D) - Hybrid Sample (Fixed Alpha & Robust)
+        // 2. Vector Processing (Blend2D) - Hybrid Sample (Multi-Threaded Copy)
         // ==============================================================================
         if (dstBitDepth == OFX::eBitDepthUByte || dstBitDepth == OFX::eBitDepthUShort || dstBitDepth == OFX::eBitDepthFloat) {
             OfxRectI bounds = dst->getBounds();
@@ -387,63 +444,21 @@ class MugPlugin : public OFX::ImageEffect {
                 }
                 ctx.end();
 
-                BLImageData img_data;
-                img.get_data(&img_data);
-
-                for (int y = 0; y < height; y++) {
-                    uint32_t* src_line = reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(img_data.pixel_data) + (y * img_data.stride));
-                    int dst_y = (height - 1) - y;
-
-                    if (dstBitDepth == OFX::eBitDepthUByte) {
-                        uint8_t* dst_line = reinterpret_cast<uint8_t*>(dst->getPixelAddress(bounds.x1, bounds.y1 + dst_y));
-                        for (int x = 0; x < width; x++) {
-                            uint32_t p = src_line[x];
-                            uint32_t sa = (p >> 24) & 0xFF;
-                            if (sa == 0) continue;
-                            uint32_t sr = (p >> 16) & 0xFF; uint32_t sg = (p >> 8) & 0xFF; uint32_t sb = p & 0xFF;
-                            if (sa == 255) {
-                                dst_line[x*4+0] = (uint8_t)sr; dst_line[x*4+1] = (uint8_t)sg; dst_line[x*4+2] = (uint8_t)sb; dst_line[x*4+3] = 255;
-                            } else {
-                                // PRGB Blending: Dst = Src + Dst * (1 - sa)
-                                uint32_t inv_sa = 255 - sa;
-                                dst_line[x*4+0] = (uint8_t)(sr + (dst_line[x*4+0] * inv_sa + 127) / 255);
-                                dst_line[x*4+1] = (uint8_t)(sg + (dst_line[x*4+1] * inv_sa + 127) / 255);
-                                dst_line[x*4+2] = (uint8_t)(sb + (dst_line[x*4+2] * inv_sa + 127) / 255);
-                                dst_line[x*4+3] = (uint8_t)(sa + (dst_line[x*4+3] * inv_sa + 127) / 255);
-                            }
-                        }
-                    } else if (dstBitDepth == OFX::eBitDepthUShort) {
-                        uint16_t* dst_line = reinterpret_cast<uint16_t*>(dst->getPixelAddress(bounds.x1, bounds.y1 + dst_y));
-                        for (int x = 0; x < width; x++) {
-                            uint32_t p = src_line[x];
-                            uint32_t sa = (p >> 24) & 0xFF;
-                            if (sa == 0) continue;
-                            uint32_t sa16 = sa * 257;
-                            uint32_t sr = ((p >> 16) & 0xFF) * 257; uint32_t sg = ((p >> 8) & 0xFF) * 257; uint32_t sb = (p & 0xFF) * 257;
-                            if (sa == 255) {
-                                dst_line[x*4+0] = (uint16_t)sr; dst_line[x*4+1] = (uint16_t)sg; dst_line[x*4+2] = (uint16_t)sb; dst_line[x*4+3] = 65535;
-                            } else {
-                                uint32_t inv_sa16 = 65535 - sa16;
-                                dst_line[x*4+0] = (uint16_t)(sr + (dst_line[x*4+0] * inv_sa16 + 32767) / 65535);
-                                dst_line[x*4+1] = (uint16_t)(sg + (dst_line[x*4+1] * inv_sa16 + 32767) / 65535);
-                                dst_line[x*4+2] = (uint16_t)(sb + (dst_line[x*4+2] * inv_sa16 + 32767) / 65535);
-                                dst_line[x*4+3] = (uint16_t)(sa16 + (dst_line[x*4+3] * inv_sa16 + 32767) / 65535);
-                            }
-                        }
-                    } else if (dstBitDepth == OFX::eBitDepthFloat) {
-                        float* dst_line = reinterpret_cast<float*>(dst->getPixelAddress(bounds.x1, bounds.y1 + dst_y));
-                        for (int x = 0; x < width; x++) {
-                            uint32_t p = src_line[x];
-                            float sa = ((p >> 24) & 0xFF) / 255.0f;
-                            if (sa <= 0.0f) continue;
-                            float sr = ((p >> 16) & 0xFF) / 255.0f; float sg = ((p >> 8) & 0xFF) / 255.0f; float sb = (p & 0xFF) / 255.0f;
-                            float inv_sa = 1.0f - sa;
-                            dst_line[x*4+0] = sr + dst_line[x*4+0] * inv_sa;
-                            dst_line[x*4+1] = sg + dst_line[x*4+1] * inv_sa;
-                            dst_line[x*4+2] = sb + dst_line[x*4+2] * inv_sa;
-                            dst_line[x*4+3] = sa + dst_line[x*4+3] * inv_sa;
-                        }
-                    }
+                if (dstBitDepth == OFX::eBitDepthUByte) {
+                    Blend2DCompositor<uint8_t, 255> compositor(*this, img, bounds, height);
+                    compositor.setDstImg(dst.get());
+                    compositor.setRenderWindow(args.renderWindow);
+                    compositor.process();
+                } else if (dstBitDepth == OFX::eBitDepthUShort) {
+                    Blend2DCompositor<uint16_t, 65535> compositor(*this, img, bounds, height);
+                    compositor.setDstImg(dst.get());
+                    compositor.setRenderWindow(args.renderWindow);
+                    compositor.process();
+                } else if (dstBitDepth == OFX::eBitDepthFloat) {
+                    Blend2DCompositor<float, 1> compositor(*this, img, bounds, height);
+                    compositor.setDstImg(dst.get());
+                    compositor.setRenderWindow(args.renderWindow);
+                    compositor.process();
                 }
             }
         }
