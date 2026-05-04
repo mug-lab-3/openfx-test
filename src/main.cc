@@ -62,7 +62,11 @@ class MugUnifiedProcessor : public OFX::ImageProcessor {
             // Segment 1: Left of ROI
             for (; x < roi_x1; x++) {
                 dst_p[0] = src_p[0];
-                dst_p[1] = static_cast<PIX>(src_p[1] * 0.5);
+                if constexpr (std::is_floating_point_v<PIX>) {
+                    dst_p[1] = src_p[1] * 0.5f;
+                } else {
+                    dst_p[1] = src_p[1] >> 1;
+                }
                 dst_p[2] = src_p[2];
                 dst_p[3] = src_p[3];
                 dst_p += 4;
@@ -76,18 +80,32 @@ class MugUnifiedProcessor : public OFX::ImageProcessor {
                     reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(blData.pixel_data) + (bl_y * blData.stride));
 
                 for (; x < roi_x2; x++) {
-                    PIX r = src_p[0], g = static_cast<PIX>(src_p[1] * 0.5), b = src_p[2], a = src_p[3];
+                    PIX g;
+                    if constexpr (std::is_floating_point_v<PIX>) {
+                        g = src_p[1] * 0.5f;
+                    } else {
+                        g = src_p[1] >> 1;
+                    }
+                    PIX r = src_p[0], b = src_p[2], a = src_p[3];
 
                     uint32_t p = bl_line[x - _bounds.x1];
                     uint32_t sa_8 = (p >> 24) & 0xFF;
                     if (sa_8 > 0) {
                         if constexpr (std::is_same_v<PIX, float>) {
-                            float sa = sa_8 / 255.0f;
+                            constexpr float inv255 = 1.0f / 255.0f;
+                            float sa = sa_8 * inv255;
                             float inv_sa = 1.0f - sa;
-                            r = (((p >> 16) & 0xFF) / 255.0f) + (r * inv_sa);
-                            g = (((p >> 8) & 0xFF) / 255.0f) + (g * inv_sa);
-                            b = ((p & 0xFF) / 255.0f) + (b * inv_sa);
-                            a = sa + (a * inv_sa);
+                            if (sa_8 == 255) {
+                                r = ((p >> 16) & 0xFF) * inv255;
+                                g = ((p >> 8) & 0xFF) * inv255;
+                                b = (p & 0xFF) * inv255;
+                                a = 1.0f;
+                            } else {
+                                r = (((p >> 16) & 0xFF) * inv255) + (r * inv_sa);
+                                g = (((p >> 8) & 0xFF) * inv255) + (g * inv_sa);
+                                b = ((p & 0xFF) * inv255) + (b * inv_sa);
+                                a = sa + (a * inv_sa);
+                            }
                         } else {
                             uint32_t sa = (maxVal == 255) ? sa_8 : (sa_8 * 257);
                             uint32_t inv_sa = maxVal - sa;
@@ -115,7 +133,11 @@ class MugUnifiedProcessor : public OFX::ImageProcessor {
             // Segment 3: Right of ROI
             for (; x < window.x2; x++) {
                 dst_p[0] = src_p[0];
-                dst_p[1] = static_cast<PIX>(src_p[1] * 0.5);
+                if constexpr (std::is_floating_point_v<PIX>) {
+                    dst_p[1] = src_p[1] * 0.5f;
+                } else {
+                    dst_p[1] = src_p[1] >> 1;
+                }
                 dst_p[2] = src_p[2];
                 dst_p[3] = src_p[3];
                 dst_p += 4;
@@ -367,7 +389,7 @@ class MugPlugin : public OFX::ImageEffect {
                 }
                 BLContextCreateInfo createInfo;
                 createInfo.flags = BL_CONTEXT_CREATE_NO_FLAGS;
-                createInfo.thread_count = 0;
+                createInfo.thread_count = 1; // Single thread to avoid oversubscription with OFX
                 BLContext ctx(_cachedImg, createInfo);
                 ctx.set_comp_op(BL_COMP_OP_SRC_COPY);
                 ctx.fill_all(BLRgba32(0x00000000));
