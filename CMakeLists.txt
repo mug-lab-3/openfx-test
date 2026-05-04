@@ -8,6 +8,15 @@ if(CCACHE_PROGRAM)
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
+# Blend2D Integration (Local Source)
+set(ASMJIT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/asmjit" CACHE PATH "")
+set(BLEND2D_TEST OFF CACHE BOOL "" FORCE)
+set(BLEND2D_SAMPLES OFF CACHE BOOL "" FORCE)
+set(BLEND2D_STATIC ON CACHE BOOL "" FORCE)
+set(BLEND2D_NO_STDCXX OFF CACHE BOOL "" FORCE)
+
+add_subdirectory(3rdparty/blend2d)
+
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -37,7 +46,14 @@ add_library(MugPlugin SHARED
 )
 
 # Include Directories
-target_include_directories(MugPlugin PRIVATE ${OFX_INCLUDE_DIRS})
+target_include_directories(MugPlugin PRIVATE 
+    ${OFX_INCLUDE_DIRS} 
+    3rdparty/blend2d
+    3rdparty/blend2d/blend2d
+)
+
+# Link Libraries
+target_link_libraries(MugPlugin PRIVATE blend2d)
 
 # Position Independent Code
 set_target_properties(MugPlugin PROPERTIES POSITION_INDEPENDENT_CODE ON)

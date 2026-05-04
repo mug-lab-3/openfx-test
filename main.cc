@@ -23,6 +23,8 @@
 #include "ofxsInteract.h"
 #include "ofxsProcessing.h"
 
+#include <blend2d.h>
+
 // ==============================================================================
 // Image Processor: Multi-threaded pixel processing
 // ==============================================================================
@@ -332,6 +334,68 @@ class MugPlugin : public OFX::ImageEffect {
                 }
                 default:
                     break;
+            }
+        }
+
+        // ==============================================================================
+        // 2. Vector Processing (Blend2D) - Hybrid Sample
+        // ==============================================================================
+        if (dstBitDepth == OFX::eBitDepthUByte && dstComponents == OFX::ePixelComponentRGBA) {
+            double ncx, ncy, nw, nh;
+            fetchDouble2DParam("rectCenter")->getValueAtTime(args.time, ncx, ncy);
+            nw = fetchDoubleParam("rectWidth")->getValueAtTime(args.time);
+            nh = fetchDoubleParam("rectHeight")->getValueAtTime(args.time);
+
+            OfxRectI bounds = dst->getBounds();
+            int width = bounds.x2 - bounds.x1;
+            int height = bounds.y2 - bounds.y1;
+
+            // OpenFX images can be larger than the render window.
+            // We map the Blend2D image to the entire destination buffer.
+            void* data = dst->getPixelAddress(bounds.x1, bounds.y1);
+            intptr_t stride = dst->getRowBytes();
+
+            BLImage img;
+            // Note: Blend2D's PRGB32 is often compatible with 8-bit RGBA on many systems.
+            if (img.create_from_data(width, height, BL_FORMAT_PRGB32, data, stride) == BL_SUCCESS) {
+                BLContext ctx(img);
+
+                // For simplicity in this sample, we map normalized 0..1 to image pixels.
+                double cx = ncx * width;
+                double cy = (1.0 - ncy) * height; // Simple flip for top-down coordinate space
+                double w = nw * width;
+                double h = nh * height;
+
+                // --- Draw Shapes ---
+                ctx.set_comp_op(BL_COMP_OP_SRC_OVER);
+
+                // Draw a semi-transparent blue rectangle (Vector Rect)
+                ctx.set_fill_style(BLRgba32(0x800000FF)); 
+                ctx.fill_round_rect(BLRoundRect(cx - w * 0.5, cy - h * 0.5, w, h, 20.0));
+
+                // Draw a bright yellow circle (Vector Circle with AA)
+                ctx.set_fill_style(BLRgba32(0xFFFFFF00));
+                ctx.fill_circle(cx, cy, w * 0.2);
+
+                // Draw an outline
+                ctx.set_stroke_style(BLRgba32(0xFFFFFFFF));
+                ctx.set_stroke_width(2.0);
+                ctx.stroke_circle(cx, cy, w * 0.2);
+
+                // --- Draw Text ---
+                BLFontFace face;
+                // Try common Linux paths for the sample (adjust for Windows distribution)
+                if (face.create_from_file("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf") == BL_SUCCESS ||
+                    face.create_from_file("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf") == BL_SUCCESS ||
+                    face.create_from_file("/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf") == BL_SUCCESS) 
+                {
+                    BLFont font;
+                    font.create_from_face(face, 24.0f);
+                    ctx.set_fill_style(BLRgba32(0xFFFFFFFF));
+                    ctx.fill_utf8_text(BLPoint(cx - w * 0.4, cy + h * 0.4), font, "Blend2D Hybrid Vector Text");
+                }
+
+                ctx.end();
             }
         }
     }

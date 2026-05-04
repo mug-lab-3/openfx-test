@@ -102,10 +102,12 @@ chmod +x build.sh
 - `main.cc`: プラグインのメインソースコード
 - `CMakeLists.txt`: ビルド設定
 - `toolchain.cmake`: LLVM クロスコンパイル用設定ファイル
+- `3rdparty/`: 外部ライブラリ（Blend2D, AsmJit）のソースコード
 - `openfx-OFX_Release_1.5.1/`: OpenFX SDK (Support Library を含む)
 - `build.sh`: ビルド実行用ラッパースクリプト
 
 ## 高速化の仕組み
 
-- **Ninja**: Makefile よりも高速に依存関係をチェックし、並列ビルドを行います。
-- **ccache**: 一度コンパイルした結果をキャッシュします。`rm -rf build` でディレクトリを削除しても、2回目以降のコンパイルは一瞬で終わります。
+- **Ninja (Optional)**: Makefile よりも高速に依存関係をチェックし、並列ビルドを行います。
+- **ccache**: 一度コンパイルした結果をキャッシュします。
+- **Local 3rdparty**: 外部ライブラリをプロジェクト内に内包することで、ネットワーク環境や CMake のバージョンに左右されない安定したビルドを実現しています。
