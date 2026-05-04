@@ -92,8 +92,7 @@ class MugInteract : public OFX::OverlayInteract {
     DragMode drag_mode_{eModeNone};
 
    public:
-    MugInteract(OfxInteractHandle handle, OFX::ImageEffect* effect)
-        : OFX::OverlayInteract(handle) {
+    MugInteract(OfxInteractHandle handle, OFX::ImageEffect* effect) : OFX::OverlayInteract(handle) {
         rect_center_ = effect->fetchDouble2DParam("rectCenter");
         rect_width_ = effect->fetchDoubleParam("rectWidth");
         rect_height_ = effect->fetchDoubleParam("rectHeight");
@@ -350,7 +349,7 @@ class MugPluginFactory : public OFX::PluginFactoryHelper<MugPluginFactory> {
     }
 
     void describe(OFX::ImageEffectDescriptor& desc) override {
-        desc.setLabels("Mug Min Plugin 8", "Mug Min Plugin 8", "Mug Min Plugin 8");
+        desc.setLabels("Mug Plugin", "Mug Plugin", "Mug Plugin");
         desc.setPluginGrouping("MugLab");
         desc.addSupportedContext(OFX::eContextFilter);
         desc.addSupportedContext(OFX::eContextGeneral);
