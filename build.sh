@@ -8,9 +8,7 @@ if [ ! -d "build" ]; then
     fi
 
     cmake -B build $GENERATOR_ARGS \
-      -DCMAKE_CXX_COMPILER=clang++ \
-      -DCMAKE_CXX_FLAGS="-target x86_64-pc-windows-gnu" \
-      -DCMAKE_SYSTEM_NAME=Windows
+      -DCMAKE_TOOLCHAIN_FILE=toolchain.cmake
 fi
 
 # Execute build
