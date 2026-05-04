@@ -13,6 +13,10 @@
 #include <GL/gl.h>
 #endif
 
+#include <concepts>
+#include <memory>
+#include <span>
+
 #include "ofxsCore.h"
 #include "ofxsImageEffect.h"
 #include "ofxsInteract.h"
@@ -21,7 +25,11 @@
 // ==============================================================================
 // Image Processor: Multi-threaded pixel processing
 // ==============================================================================
-template <class PIX, int nComponents, int max>
+// Concepts: Ensure PIX is a numeric type (integer or floating point)
+template <typename T>
+concept OfxPixel = std::integral<T> || std::floating_point<T>;
+
+template <OfxPixel PIX, int nComponents, int max>
 class MugGreenScaler : public OFX::ImageProcessor {
    protected:
     OFX::Image* src_img_;
@@ -35,21 +43,28 @@ class MugGreenScaler : public OFX::ImageProcessor {
     }
 
     virtual void multiThreadProcessImages(OfxRectI procWindow) override {
+        const int width = procWindow.x2 - procWindow.x1;
+
         for (int y = procWindow.y1; y < procWindow.y2; y++) {
             if (_effect.abort()) break;
-            PIX* dstPix = (PIX*)_dstImg->getPixelAddress(procWindow.x1, y);
-            PIX* srcPix = (PIX*)src_img_->getPixelAddress(procWindow.x1, y);
 
-            for (int x = procWindow.x1; x < procWindow.x2; x++) {
-                for (int c = 0; c < nComponents; c++) {
+            // Use std::span for safer memory access
+            std::span<PIX> dst_row(static_cast<PIX*>(_dstImg->getPixelAddress(procWindow.x1, y)),
+                                   width * nComponents);
+            std::span<const PIX> src_row(
+                static_cast<const PIX*>(src_img_->getPixelAddress(procWindow.x1, y)),
+                width * nComponents);
+
+            for (int x = 0; x < width; ++x) {
+                const int pixel_offset = x * nComponents;
+                for (int c = 0; c < nComponents; ++c) {
+                    const int idx = pixel_offset + c;
                     if (c == 1) {  // Green channel
-                        dstPix[c] = (PIX)(srcPix[c] * 0.5);
+                        dst_row[idx] = static_cast<PIX>(src_row[idx] * 0.5);
                     } else {
-                        dstPix[c] = srcPix[c];
+                        dst_row[idx] = src_row[idx];
                     }
                 }
-                dstPix += nComponents;
-                srcPix += nComponents;
             }
         }
     }

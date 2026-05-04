@@ -1,0 +1,9 @@
+{
+  "C_Cpp.intelliSenseEngine": "disabled",
+  "C_Cpp.clang_format_style": "Google",
+  "clangd.fallbackStyle": "Google",
+  "[cpp]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+    "editor.formatOnSave": true
+  }
+}
